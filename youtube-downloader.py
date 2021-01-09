@@ -5,7 +5,7 @@ import tkinter.font as font
 import os, threading, time
 from PIL import ImageTk, Image
 
-import search_video, format_display, download_video, setup
+import search_video, format_display, download_video, set_up
 
 
 #list to store the remembered photos
@@ -20,7 +20,7 @@ video_att_frame_lsts = {}
 processes = {}
 
 #read the data from the setup file
-setting_file = setup.SetupFile("setup.txt", os.getcwd())
+setting_file = set_up.SetupFile("setup.txt", os.getcwd())
 setting_data = setting_file.get_data()
 
 
