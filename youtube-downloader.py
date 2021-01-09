@@ -234,10 +234,11 @@ class NestedRadioButton():
 
         #create the 'download button' if it is not created yet
         if (self.confirm_button is None):
-            self.confirm_button = Button(self.button_frame, text="Download!", command=lambda: self.download_video(folder), font=confirm_button_font,bg="red", fg="white", borderwidth=0, cursor="hand2")
+            self.confirm_button = Button(self.button_frame, text="Download!", font=confirm_button_font,bg="red", fg="white", borderwidth=0, cursor="hand2")
             self.confirm_button.bind("<Enter>", lambda event: self.confirm_button.config(bg="#e60000"))
             self.confirm_button.bind("<Leave>", lambda event: self.confirm_button.config(bg="red"))
 
+        self.confirm_button.config(command=lambda: self.download_video(folder))
         self.confirm_button.pack(ipady="5", ipadx="7", pady="30")
 
 
@@ -1169,6 +1170,11 @@ class Application(Frame):
         self.finish_download_sentence.pack()
 
         self.finish_download_sentence = Label(self.finish_download_status, text=download_path, justify="left",bg="white")
+        self.finish_download_sentence = Label(self.finish_download_status, text=download_path, justify="left",bg="white", fg="#4da6ff")
+        self.finish_download_sentence.config(fg="#4da6ff", cursor="hand2")
+        self.finish_download_sentence.bind("<Button-1>", lambda event, filepath = download_path: self.open_explorer(filepath))
+        self.finish_download_sentence.bind("<Enter>", lambda event, label = self.finish_download_sentence: label.config(fg="#0080ff"))
+        self.finish_download_sentence.bind("<Leave>", lambda event, label = self.finish_download_sentence: label.config(fg="#4da6ff"))
         self.finish_download_sentence.pack()
 
         self.finish_button_frame = Frame(self.finish_download_frame, bg="white")
@@ -1262,6 +1268,11 @@ class Application(Frame):
             self.settings_submit_close.pack(side="right", padx=10, pady=10, ipadx=5, ipady=3)
             self.settings_submit_apply.pack(side="right", padx=10, pady=10, ipadx=5, ipady=3)
 
+
+    #opens the file explorer when the user clicks on the path of the finish download
+    def open_explorer(self, filepath):
+        dir = os.path.dirname(filepath)
+        os.startfile(dir)
 
     #when the user changes the entry of the settings
     def entry_change_setting(self,entry_frame,key, entry, var):
@@ -1444,3 +1455,4 @@ search_wrap_thread.start()
 
 #start the main app
 app.mainloop()
+
