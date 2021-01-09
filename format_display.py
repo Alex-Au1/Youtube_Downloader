@@ -3,7 +3,7 @@ from PIL import ImageTk, Image
 from io import BytesIO
 import pyperclip
 
-import setup
+import set_up
 
 
 '''
@@ -118,16 +118,16 @@ format_settings: str, str -> str
 def format_settings(key, value):
     if (key == 'results/search' or key == 'results/page'):
         if (value.isnumeric()):
-            if (int(value) < setup.limits["results/search"]["min"]):
-                value = str(setup.limits["results/search"]["min"])
-            elif (int(value) > setup.limits["results/search"]["max"]):
-                value = str(setup.limits["results/search"]["max"])
+            if (int(value) < set_up.limits["results/search"]["min"]):
+                value = str(set_up.limits["results/search"]["min"])
+            elif (int(value) > set_up.limits["results/search"]["max"]):
+                value = str(set_up.limits["results/search"]["max"])
 
         else:
             if (key == 'results/search'):
-                value = str(setup.default["results/search"])
+                value = str(set_up.default["results/search"])
             else:
-                value = str(setup.default['results/page'])
+                value = str(set_up.default['results/page'])
 
     return value
 
