@@ -2,7 +2,7 @@ from tkinter import *
 from tkinter import filedialog
 from tkinter import messagebox
 import tkinter.font as font
-import os, threading, time
+import os, threading
 from PIL import ImageTk, Image
 
 import search_video, format_display, download_video, set_up
@@ -1444,8 +1444,11 @@ menu_bar.add_cascade(label="File", menu=settings)
 
 
 #icon photo
-icon = PhotoImage(file="icon.png")
-root.iconphoto(False, icon)
+try:
+    icon = PhotoImage(file="icon.png")
+    root.iconphoto(False, icon)
+except:
+    pass
 
 
 root.config(menu=menu_bar, bg="white")
