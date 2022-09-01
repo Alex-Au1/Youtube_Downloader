@@ -1,5 +1,7 @@
 from __future__ import unicode_literals
-import youtube_dl, os, validators
+import yt_dlp as youtube_dl
+import os, validators, collections, pathlib
+import mutagen
 from enum import Enum
 
 import format_display
@@ -11,6 +13,10 @@ ydl_opts = {}
 download_progress = "Beginning Download..."
 file_download_type = ""
 download_no = 1
+
+
+
+
 
 
 #formats for downloading the video from Youtube
@@ -197,8 +203,15 @@ def download_hook(d):
 
     #when the video is still downloading, display the progress
     if d['status'] == 'downloading':
-        p = d['_percent_str']
-        download_progress = f"Downloading {file_type}...    Progress: {d['_percent_str']}, ETA: {d['_eta_str']}"
+        current_size = format_display.remove_ansi_codes(d['_downloaded_bytes_str'])
+        total_size = format_display.remove_ansi_codes(d['_total_bytes_str'])
+
+        eta = format_display.remove_ansi_codes(d['_eta_str'])
+        percent = format_display.remove_ansi_codes(d['_percent_str'])
+        speed = format_display.remove_ansi_codes(d["_speed_str"])
+
+
+        download_progress = f"Downloading {file_type}...    Progress: {percent} ({current_size} / {total_size}), ETA: {eta}, Speed: {speed}"
 
 
 #returns the download progress to the main app
@@ -208,13 +221,14 @@ def get_progress():
 
 #downloads the selected video
 def download_video(video ,format, download_type,file_type, folder):
-    video_file_name = f"{video[3]}-{video[1]}"
+    video_file_name = f"{video['title']}-{video['id']}"
     video_file_name = format_display.format_filename(video_file_name)
 
     #options for downloading the video
     ydl_opts = {'outtmpl': f'{video_file_name}.%(ext)s',
                 'noplaylist' : True,
                 'nocheckcertificate':True,
+                'writethumbnail':True,
                 'progress_hooks': [download_hook]}
 
     #if downloading only audio format
@@ -234,20 +248,22 @@ def download_video(video ,format, download_type,file_type, folder):
             ydl_opts["postprocessors"] = [{'key': 'FFmpegVideoConvertor',
                                            'preferedformat':download_type["video"]}]
 
+    ydl_opts["postprocessors"] += [{"key": "FFmpegMetadata", 'add_metadata': True},
+                                   {"key": "EmbedThumbnail", 'already_have_thumbnail': False}]
+
 
     #format for downloading
     ydl_opts['format'] = format
 
     #download the video
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([video[2]])
+        ydl.download([video["link"]])
 
-    return move_video(video_file_name, file_type, folder)
-
+    return move_video(video_file_name, file_type, folder, video)
 
 
 #move the video to the desired file location
-def move_video(video_file_name,file_type, folder):
+def move_video(video_file_name,file_type, folder, video):
     global download_progress
     download_progress = "Moving File to Selected Directory..."
 
@@ -268,7 +284,15 @@ def move_video(video_file_name,file_type, folder):
     old_path = f"{path}/{basefile}"
     new_path = f"{folder}/{basefile}"
 
+
+    # get the number of existing file names in the new folder
+    existing_file_no = 0
     copy_no = 0
+
+    #get the downloaded file
+    for filename in os.listdir(f"{folder}"):
+        if (filename.startswith(video_file_name)):
+            existing_file_no += 1
 
     #rename the file if the file already exists
     while (os.path.exists(new_path)):
@@ -300,7 +324,35 @@ def move_video(video_file_name,file_type, folder):
         download_progress = f"Cannot Move File to Selected Directory,\nMoving File to Default Directory Location at {new_path}"
         os.rename(old_path, new_path)
 
-    return new_path
+    return fill_metadata(new_path, video_file_name, video, existing_file_no)
+
+
+# fill_metadata(path, video_file_name, video, track_no): Fills in extra meta data needed for the
+#   downloaded files
+def fill_metadata(path, video_file_name, video, track_no):
+    extension = pathlib.Path(f'{path}').suffix
+    is_m4a = bool(extension == ".m4a")
+
+    # fill in the meta data for audio only files
+    if (extension == ".mp3" or is_m4a):
+        album_name = video["title"]
+        uploader = video["channel"]["name"]
+
+        audio = mutagen.File(path, easy=True)
+        audio['album'] = album_name
+        audio['albumartist'] = uploader
+        audio['tracknumber'] = f"{track_no + 1}"
+
+        audio.save(path)
+
+    # correct the year
+    if (is_m4a or extension == ".mp4"):
+        audio = mutagen.File(path, easy=False)
+        audio['\xa9day'] = audio['\xa9day'][0][:4]
+
+        audio.save(path)
+
+    return path
 
 
 #retrieves the meta data from the selected video
@@ -336,7 +388,7 @@ def format_filetype(file_download_codes):
 def valid_yt_link(link):
     valid_link = validators.url(link)
 
-    if (valid_link and link.startswith("https://www.youtube.com/watch?v=")):
+    if (valid_link and (link.startswith("https://www.youtube.com/watch?v=") or link.startswith("https://youtu.be/"))):
         return True
     else:
         return False
