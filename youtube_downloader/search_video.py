@@ -1,4 +1,4 @@
-from youtubesearchpython import SearchVideos
+from youtubesearchpython import VideosSearch
 
 
 '''
@@ -7,23 +7,30 @@ search_youtube_video(search_query) Produces a list of the video attributes
 search_youtube_video: str -> List[List[Any[str, List[str]]]]
 '''
 def search_youtube_video(search_query, no_of_searches):
-    search = SearchVideos(search_query, offset = 1, mode = "json", max_results = int(no_of_searches))
-    results = search.result()
+    results = []
+    search = None
+    results_len = len(results)
+    start_search = False
 
-    #list containing all the result contents
-    video = results.split("\n")
+    # retrieve all the searches needed
+    while (results_len < no_of_searches):
+        if (start_search):
+            search.next()
+        else:
+            search = VideosSearch(search_query)
+            start_search  = True
 
-    #list of attributes for the Video
-    video_attributes=[]
+        search_results = search.result()["result"]
 
-    #get only the video attributes seperated by {} brackets
-    video = video[2:-2]
+        if (search_results):
+            results += search.result()["result"]
+            results_len = len(results)
+        else:
+            break
 
-    #strip whitespaces infront and behind each element
-    for i in range(len(video)):
-        video[i] = video[i].strip()
+    results = results[:no_of_searches]
 
-    return get_video_attributes(video, [], [], [])
+    return results
 
 
 
