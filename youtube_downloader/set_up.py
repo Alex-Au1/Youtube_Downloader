@@ -1,11 +1,11 @@
 import os
 
 #minimum and maximum for each setting attribute
-limits = {"results/search":{"min":1, "max":20},
-          "results/page":{"min":1, "max":20}}
+limits = {"results/search":{"min":1, "max":100},
+          "results/page":{"min":1, "max": 100}}
 
 #default values for the setting attributes
-default = {"results/search":20, "results/page":10}
+default = {"results/search":100, "results/page":10}
 
 
 #for editting, viewing lines in the setup file
@@ -87,3 +87,4 @@ class SetupFile():
             file.write(line)
 
         file.close()
+
