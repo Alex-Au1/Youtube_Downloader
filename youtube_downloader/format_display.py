@@ -1,4 +1,4 @@
-import codecs, requests, asyncio
+import codecs, requests, re
 from PIL import ImageTk, Image
 from io import BytesIO
 import pyperclip
@@ -56,34 +56,57 @@ format_name(name) Changes all the UTF-8 characters in 'name' to its respective
 format_name: str -> str
 '''
 def format_name(name):
-    name = codecs.decode(name, "unicode_escape")
     return name
 
 
-'''
-format_time(time) Produces a string that divides 'time' into days, hours,
-    minutes and seconds
-format_time: int -> str
-'''
-def format_time(time):
+# add_leading_zero(str) Adds a leading zero to 'str'
+def add_leading_zero(str: str, limit: int = 10) -> str:
+    result = str
 
-    if (not time):
-        str_time = "LIVE"
-    else:
-        min = 60
-        hr = 60
-        day = 24
+    try:
+        int_str = int(str)
 
-        formatted_min, formatted_sec = divmod(time, min)
-        formatted_hr, formatted_min = divmod(formatted_min, hr)
-        formatted_day, formatted_hr = divmod(formatted_hr, day)
+        if (int_str < limit):
+            result = f"0{int_str}"
+    except:
+        pass
 
+    return result
+
+
+# format_time(time, verbose) Produces a string that divides 'time' into days, hours,
+#    minutes and seconds
+def format_time(time: int, verbose: bool = False) -> str:
+    min = 60
+    hr = 60
+    day = 24
+
+    formatted_min, formatted_sec = divmod(time, min)
+    formatted_hr, formatted_min = divmod(formatted_min, hr)
+    formatted_day, formatted_hr = divmod(formatted_hr, day)
+
+    formatted_sec = add_leading_zero(formatted_sec)
+
+    if (formatted_day or formatted_hr):
+        formatted_min = add_leading_zero(formatted_min)
+
+        if (formatted_day):
+            formatted_hr = add_leading_zero(formatted_hr)
+
+    if (not verbose):
         str_time = f"{formatted_min}:{formatted_sec}"
 
         if (formatted_day):
             str_time = f"{formatted_day}:{formatted_hr}:{str_time}"
         elif (formatted_hr):
             str_time = f"{formatted_hr}:{str_time}"
+    else:
+        str_time = f"{formatted_min} minute(s), {formatted_sec} second(s)"
+
+        if (formatted_day):
+            str_time = f"{formatted_day} day(s), {formatted_hr} hour(s), {str_time}"
+        elif (formatted_hr):
+            str_time = f"{formatted_hr} hour(s), {str_time}"
 
     return str_time
 
@@ -130,6 +153,13 @@ def format_settings(key, value):
                 value = str(set_up.default['results/page'])
 
     return value
+
+
+# remove_ansi_codes(txt): removes the ANSI escape sequences from 'txt'
+def remove_ansi_codes(txt: str) -> str:
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    result = ansi_escape.sub('', txt)
+    return result
 
 
 #copies the text onto the user's clipboard
