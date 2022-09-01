@@ -2,7 +2,7 @@ from tkinter import *
 from tkinter import filedialog
 from tkinter import messagebox
 import tkinter.font as font
-import os, threading
+import os, threading, traceback
 from PIL import ImageTk, Image
 
 import search_video, format_display, download_video, set_up
@@ -42,19 +42,29 @@ class ResizingCanvas(Canvas):
         self.bind("<Configure>", self.on_resize)
         self.height = self.winfo_reqheight()
         self.width = self.winfo_reqwidth()
+        self.is_resizing = False
 
 
     #rescales the canvas and every content within the canvas
     def on_resize(self,event):
+        # flag whether the canvas is resizing
+        self.is_resizing = True
+
         # determine the ratio of old width/height to new width/height
         wscale = float(event.width)/self.width
         hscale = float(event.height)/self.height
         self.width = event.width
         self.height = event.height
+
+        sc_width = self.width
+        sc_height = self.height
+
         # resize the canvas
         self.config(width=self.width, height=self.height)
         # rescale all the objects tagged with the "all" tag
         self.scale("all",0,0,wscale,hscale)
+
+        self.is_resizing = False
 
 
 
@@ -248,7 +258,7 @@ class NestedRadioButton():
         app.loading_page.pack_page()
 
         #does not download video if the selected video is a stream
-        if (self.video[5] == "LIVE"):
+        if (self.video["duration"] == "LIVE"):
             confirm_error = messagebox.showwarning("Unable to Download Streams", "Downloader unable to download streams")
 
             if (confirm_error == "ok"):
@@ -312,13 +322,14 @@ class LoadingPage:
 
     #Creates the loadbar for the loading page, consisting of 10 bars
     def make_loadbar(self):
-        x_center = sc_width / 4
-        y_center = sc_height / 4
+        x_center = self.load_page.width / 2
+        y_center = self.load_page.height / 2
 
         rect_width = 4
         rect_spacing = 2
         rect_height = 30
         rect_colour = "red"
+
 
         x = x_center - (rect_width + rect_spacing) * 5
         y = y_center - int(rect_height / 2)
@@ -357,44 +368,45 @@ class LoadingPage:
 
     #Animates the loading bar of the LoadingPage and changes the text of the LoadingPage
     def animate(self, word_update_func = None, word_update_args=[]):
-        if (self.text_update):
-            self.update_text(word_update_func, word_update_args)
+        if (not self.load_page.is_resizing):
+            if (self.text_update):
+                self.update_text(word_update_func, word_update_args)
 
-        for i in range(len(self.load_rectangles)):
-            x0, y0, x1, y1 = self.load_page.coords(self.load_rectangles[i]["shape"])
+            for i in range(len(self.load_rectangles)):
+                x0, y0, x1, y1 = self.load_page.coords(self.load_rectangles[i]["shape"])
 
-            if (self.load_rectangles[i]["move"]):
-                #stretches the current bar
-                if (self.load_rectangles[i]["growth"] == "grow"):
-                    self.load_rectangles[i]["level"] += 1
-                    y0 -= 1
-                    y1 += 1
+                if (self.load_rectangles[i]["move"]):
+                    #stretches the current bar
+                    if (self.load_rectangles[i]["growth"] == "grow"):
+                        self.load_rectangles[i]["level"] += 1
+                        y0 -= 1
+                        y1 += 1
 
-                    #moves the next bar once the current bar's is stretched halfway to its maximum size
-                    if (self.load_rectangles[i]["level"] == self.max_growth/2):
-                        next_i = i + 1
-                        if (i == len(self.load_rectangles) - 1):
-                            next_i = 0
+                        #moves the next bar once the current bar's is stretched halfway to its maximum size
+                        if (self.load_rectangles[i]["level"] == self.max_growth/2):
+                            next_i = i + 1
+                            if (i == len(self.load_rectangles) - 1):
+                                next_i = 0
 
-                        self.load_rectangles[next_i]["move"] = True
+                            self.load_rectangles[next_i]["move"] = True
 
-                    #shrinks the current bar once it hits its maximum size
-                    elif (self.load_rectangles[i]["level"] > self.max_growth):
-                        self.load_rectangles[i]["growth"] = "shrink"
+                        #shrinks the current bar once it hits its maximum size
+                        elif (self.load_rectangles[i]["level"] > self.max_growth):
+                            self.load_rectangles[i]["growth"] = "shrink"
 
-                #shrink the current bar
-                elif (self.load_rectangles[i]["growth"] == "shrink"):
-                    self.load_rectangles[i]["level"] -= 1
-                    y0 += 1
-                    y1 -= 1
+                    #shrink the current bar
+                    elif (self.load_rectangles[i]["growth"] == "shrink"):
+                        self.load_rectangles[i]["level"] -= 1
+                        y0 += 1
+                        y1 -= 1
 
-                    #stops the bar from moving once it returns back to its minimum size
-                    if (self.load_rectangles[i]["level"] < self.min_growth):
-                        self.load_rectangles[i]["growth"] = "grow"
-                        self.load_rectangles[i]["move"] = False
+                        #stops the bar from moving once it returns back to its minimum size
+                        if (self.load_rectangles[i]["level"] < self.min_growth):
+                            self.load_rectangles[i]["growth"] = "grow"
+                            self.load_rectangles[i]["move"] = False
 
-                self.load_page.coords(self.load_rectangles[i]["shape"], x0, y0, x1, y1)
-                self.load_page.update()
+                    self.load_page.coords(self.load_rectangles[i]["shape"], x0, y0, x1, y1)
+                    self.load_page.update()
 
 
     #Displays the LoadingPage on screen when a thread is running
@@ -482,15 +494,6 @@ class Application(Frame):
 
     #Loads the images required for the results screen
     def create_results_sc(self,results, root):
-        #width and height of each image icon for the search results
-        img_w = 150
-        img_h = 100
-
-        #load all the images for the search results
-        for i in range(len(results)):
-            resized_image = format_display.process_image(results[i][7][1], img_w, img_h)
-            format_display.load_image(resized_image, photo_lst, i)
-
 
         #load the first page of results
         self.load_page(root, results,0)
@@ -567,7 +570,7 @@ class Application(Frame):
 
                 #time stamp for the duration of each video
                 time_stamp = Label(search_icon)
-                time_stamp.config(text= results[i][5], bg="black", fg="white")
+                time_stamp.config(text= results[i]["duration"], bg="black", fg="white")
                 time_stamp.bind("<Button-1>", lambda event, prev_root = [self.result_frame, displayed_search_pages[page_num]], video=results[i], page_found = page_num: self.download_option_sc(prev_root,video, page_found))
                 time_stamp.place(relx=1.0, rely=1.0,anchor="se")
 
@@ -575,19 +578,19 @@ class Application(Frame):
 
                 #video title
                 video_title_font = font.Font(size = 12, weight="bold")
-                video_title_text = format_display.format_name(results[i][3])
+                video_title_text = format_display.format_name(results[i]["title"])
                 video_title = Label(video_att_frame_lsts[i], text=video_title_text, justify="left", bg="white", font=video_title_font)
                 video_title.bind("<Button-1>", lambda event, prev_root = [self.result_frame, displayed_search_pages[page_num]], video=results[i], page_found = page_num: self.download_option_sc(prev_root,video, page_found))
                 video_title.pack(anchor="w")
 
                 #Views and post date
                 video_view_post_font = font.Font(size = 10)
-                video_view_post = Label(video_att_frame_lsts[i], text=f"{format_display.format_count(results[i][6], 'views')}   {results[i][9]}", justify="left", bg="white", fg="#808080", font=video_view_post_font)
+                video_view_post = Label(video_att_frame_lsts[i], text=f"{results[i]['viewCount']['short']}   {results[i]['publishedTime']}", justify="left", bg="white", fg="#808080", font=video_view_post_font)
                 video_view_post.bind("<Button-1>", lambda event, prev_root = [self.result_frame, displayed_search_pages[page_num]], video=results[i], page_found = page_num: self.download_option_sc(prev_root,video, page_found))
                 video_view_post.pack(anchor="w")
 
                 #uploader
-                uploader_text = format_display.format_name(results[i][4])
+                uploader_text = format_display.format_name(results[i]["channel"]["name"])
                 uploader = Label(video_att_frame_lsts[i], text=uploader_text, justify="left", bg="white", fg="#808080")
                 uploader.bind("<Button-1>", lambda event, prev_root = [self.result_frame, displayed_search_pages[page_num]], video=results[i], page_found = page_num: self.download_option_sc(prev_root,video, page_found))
                 uploader.pack(anchor="w")
@@ -741,7 +744,7 @@ class Application(Frame):
             self.loading_page = LoadingPage(self.master, "loading...")
             self.loading_page.pack_page()
 
-            search_video_thread._callableArgs = [search, setting_data["results/search"]]
+            search_video_thread._callableArgs = [search, int(setting_data["results/search"])]
             search_video_thread._running = True
             try:
                 results = search_video_thread.start()
@@ -857,7 +860,7 @@ class Application(Frame):
 
 
         if (not is_link):
-            key = int(video[0])
+            key = video["id"]
         else:
             key = -1
 
@@ -865,15 +868,15 @@ class Application(Frame):
         if (key not in download_pages_lsts.keys() or key == -1):
             if (not is_link):
                 download_pages_lsts[key] = ScrollFrame(self.download_frame, outer_frame, canvas, inner_frame, scrollbar)
-                link = video[2]
-                time = video[5]
-                date_posted = video[9]
-                title = format_display.format_name(video[3])
-                uploader = format_display.format_name(video[4])
+                link = video["link"]
+                time = video["duration"]
+                date_posted = video["publishedTime"]
+                title = format_display.format_name(video["title"])
+                uploader = format_display.format_name(video["channel"]["name"])
 
                 video_att = {"key":key, "link":link, "time":time, "date posted":date_posted, "title":title, "uploader":uploader}
 
-                meta_data_thread._callableArgs = [video[2]]
+                meta_data_thread._callableArgs = [link]
 
                 self.loading_page = LoadingPage(self.master, "loading...")
                 self.loading_page.pack_page()
@@ -917,7 +920,7 @@ class Application(Frame):
             date_posted = video_att["date posted"]
             title = video_att["title"]
             uploader = video_att["uploader"]
-            video_attributes = {"Views":format_display.format_count(video[6], '')}
+            video_attributes = {"Views": video["viewCount"]["text"]}
         else:
             key = video_att["key"]
             link = video_att["link"]
@@ -928,12 +931,15 @@ class Application(Frame):
             date_posted = format_display.format_date(str(meta["upload_date"]))
             video_attributes = {"Views":format_display.format_count(str(meta["view_count"]), '')}
 
-            video = [key, meta["id"], link, title, uploader, time, video_attributes["Views"], None, None, None]
+            video = {"id": meta["id"], "link": link, "title": title, "channel": {"name": uploader}, "duration": time, "publishedTime": date_posted, "viewCount": {"text": video_attributes["Views"]}}
 
 
 
-        video_attributes["Likes"] = format_display.format_count(str(meta["like_count"]), '')
-        video_attributes["Dislikes"] = format_display.format_count(str(meta["dislike_count"]), '')
+        try:
+            video_attributes["Likes"] = format_display.format_count(str(meta["like_count"]), '')
+        except:
+            pass
+
         video_attributes["Duration"] = time
         video_attributes["Date Posted"] = date_posted
         video_attributes["Uploader"] = format_display.format_name(uploader)
@@ -953,7 +959,7 @@ class Application(Frame):
         back_button.pack(anchor="nw", padx=10, ipadx=5, ipady=3)
 
         if (not is_link):
-            thumbnail = video[7][1]
+            thumbnail = video["thumbnails"][-1]["url"]
         else:
             thumbnail = meta["thumbnail"]
 
@@ -1010,6 +1016,8 @@ class Application(Frame):
 
             #allow the user to be able copy the video link to their clipboard
             if (a == "Link"):
+
+
                 video_att.config(fg="#4da6ff", cursor="hand2")
                 video_att.bind("<Button-1>", lambda event, link=video_attributes[a]: self.copy_link(link))
                 video_att.bind("<Enter>", lambda event, label = video_att: label.config(fg="#0080ff"))
@@ -1017,7 +1025,7 @@ class Application(Frame):
 
             video_att.pack(side="left", anchor="nw", expand="yes")
 
-            word_wrap_lst[f"{a} {video[0]}"] = video_att_frame
+            word_wrap_lst[f"{a} {video['id']}"] = video_att_frame
 
         self.loading_page.pack_forget()
 
@@ -1229,13 +1237,13 @@ class Application(Frame):
             self.results_per_search = IntVar()
             self.results_per_search.set(int(setting_data["results/search"]))
             self.settings_search_entry_fr = Frame(self.settings_search_frame, bg="black", relief="sunken")
-            self.settings_search_entry = Entry(self.settings_search_entry_fr, width=2)
+            self.settings_search_entry = Entry(self.settings_search_entry_fr, width=3)
             self.set_text(self.settings_search_entry, setting_data["results/search"])
             self.settings_search_entry_fr.pack(ipady=1, ipadx=1)
             self.settings_search_entry.bind("<Button-1>", lambda event, root=self.settings_search_entry_fr: root.config(bg="red"))
             self.settings_search_entry.bind("<Return>", lambda event: self.entry_change_setting(self.settings_search_entry_fr,"results/search", self.settings_search_entry,self.results_per_search))
             self.settings_search_entry.pack(expand="yes")
-            self.settings_search_scale = Scale(self.settings_search_frame, variable = self.results_per_search ,  from_ = 1, to = 20,  command=lambda text, root = self.settings_search_entry:self.set_text(root, text),orient = "horizontal", bg="white", highlightbackground="white")
+            self.settings_search_scale = Scale(self.settings_search_frame, variable = self.results_per_search ,  from_ = 1, to = 100,  command=lambda text, root = self.settings_search_entry:self.set_text(root, text),orient = "horizontal", bg="white", highlightbackground="white")
             self.settings_search_scale.pack()
 
             #entry and slider to change the number of search results to display per page
@@ -1247,13 +1255,13 @@ class Application(Frame):
             self.results_per_page = IntVar()
             self.results_per_page.set(int(setting_data["results/page"]))
             self.settings_page_entry_fr = Frame(self.settings_search_frame, bg="black", relief="sunken")
-            self.settings_page_entry = Entry(self.settings_page_entry_fr, width=2)
+            self.settings_page_entry = Entry(self.settings_page_entry_fr, width=3)
             self.set_text(self.settings_page_entry, setting_data["results/page"])
             self.settings_page_entry_fr.pack(ipady=1, ipadx=1)
             self.settings_page_entry.pack(expand="yes")
             self.settings_page_entry.bind("<Button-1>", lambda event, root=self.settings_page_entry_fr: root.config(bg="red"))
             self.settings_page_entry.bind("<Return>", lambda event: self.entry_change_setting(self.settings_page_entry_fr, "results/page", self.settings_page_entry,self.results_per_page))
-            self.settings_page_scale = Scale(self.settings_page_frame, variable = self.results_per_page,  from_ = 1, to = 20, command=lambda text, root = self.settings_page_entry:self.set_text(root, text) ,orient = "horizontal", bg="white", highlightbackground="white")
+            self.settings_page_scale = Scale(self.settings_page_frame, variable = self.results_per_page,  from_ = 1, to = 100, command=lambda text, root = self.settings_page_entry:self.set_text(root, text) ,orient = "horizontal", bg="white", highlightbackground="white")
             self.settings_page_scale.pack()
 
             #the submit button for the setting changes and the closed button for the settings page
@@ -1379,16 +1387,25 @@ class ProcessThread(threading.Thread):
                 try:
                     processes[self.key] = self._callable(*self._callableArgs)
                 except Exception as e:
+                    exception_lst = traceback.format_exception(type(e), e, e.__traceback__)
+                    exception_str = "".join(exception_lst)
+
+                    for e in exception_lst:
+                        exception_str += e
+
                     self._running = False
                     self._error = True
-                    processes[self.key] = e
+                    processes[self.key] = f"{e}\n\n{exception_str}"
             else:
                 try:
                     self._callable(*self._callableArgs)
                 except Exception as e:
+                    exception_lst = traceback.format_exception(type(e), e, e.__traceback__)
+                    exception_str = "".join(exception_lst)
+
                     self._running = False
                     self._error = True
-                    processes[self.key] = e
+                    processes[self.key] = f"{e}\n\n{exception_str}"
 
             # notify about the run's end
             self._running = False
@@ -1407,6 +1424,27 @@ class ProcessThread(threading.Thread):
 
 
 
+# search_videos(search_query, no_of_searches): Searches and formats the
+#   needed data for the videos results
+def search_videos(search_query: str, no_of_searches: int):
+    results = search_video.search_youtube_video(search_query, no_of_searches)
+
+    #width and height of each image icon for the search results
+    img_w = 150
+    img_h = 100
+    result_len = len(results)
+
+    #load all the images for the search results
+    for i in range(result_len):
+        thumbnails = results[i]["thumbnails"]
+
+        resized_image = format_display.process_image(thumbnails[-1]["url"], img_w, img_h)
+        format_display.load_image(resized_image, photo_lst, i)
+
+    return results
+
+
+
 
 
 video_att_lsts = {}
@@ -1420,7 +1458,7 @@ word_wrap = WordWrap(root, video_att_lsts)
 #threads to search, download, or get meta data from videos
 search_wrap_thread = threading.Thread(target=word_wrap.wrap_search_text, args=[])
 video_download_thread = ProcessThread(target=download_video.prepare_download, args=[None, None, None], key="download", return_value=True)
-search_video_thread = ProcessThread(target=search_video.search_youtube_video, args=[None, None], key="search", return_value=True)
+search_video_thread = ProcessThread(target=search_videos, args=[None, None], key="search", return_value=True)
 meta_data_thread = ProcessThread(target=download_video.get_metadata, args=[None], key="meta", return_value=True)
 video_download_thread.daemon = True
 search_video_thread.daemon = True
@@ -1445,8 +1483,7 @@ menu_bar.add_cascade(label="File", menu=settings)
 
 #icon photo
 try:
-    icon = PhotoImage(file="icon.png")
-    root.iconphoto(False, icon)
+    root.iconbitmap("icon.ico")
 except:
     pass
 
