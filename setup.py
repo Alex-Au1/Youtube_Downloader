@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="Youtube_Video_Audio_Downloader",
-    version="0.2.1",
+    version="0.2.2",
     author="Alex Au",
     author_email="AlexXianZhenYuAu@gmail.com",
     description="A Simple GUI interface to help download videos and audio files from Youtube using Youtube-dl and FFMPEG",
