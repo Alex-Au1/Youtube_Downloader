@@ -5,6 +5,6 @@ A GUI interface to help download videos and audio files from Youtube using **You
 ***
 1. Download **FFMPEG**
 2. Pip Download by the command:
-> pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ Youtube_Video_Audio_Downloader
+> pip install Youtube-Video-Audio-Downloader
 3. Locate where the folder *youtube_downloader* is located (usually within Python's *site-packages* directory)
 4. Run **youtube-downloader.py**
