@@ -18,7 +18,7 @@ body:
           required: true
         - label: I included the entire log [(as a screenshot or text)](https://gist.github.com/NawalJAhmed/2168f7659c08b6a033e7f6daf8db69a6) of my run of the fix
           required: true
-        - label: I included the `merged.ini` file if I am using merged mods or I included the whatever generated `.ini` if I am using individual mods
+        - label: I included the `merged.ini` file if I am using merged mods or I included the whatever generated `.ini` file if I am using individual mods
           required: true
   - type: textarea
     id: description
