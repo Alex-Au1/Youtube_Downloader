@@ -5,8 +5,7 @@ labels: ["bug"]
 body:
   - type: checkboxes
     attributes:
-      options:
-        label: DO NOT REMOVE OR SKIP THE ISSUE TEMPLATE
+      label: DO NOT REMOVE OR SKIP THE ISSUE TEMPLATE
   - type: checkboxes
     id: checklist
     attributes:
