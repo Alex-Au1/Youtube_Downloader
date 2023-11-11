@@ -3,10 +3,10 @@ description: File a bug report
 title: "[ version of genshin ] [version of gimi] [version of raidenboss fix] error detail"
 labels: ["bug"]
 body:
-  - type: checkboxes
+  - type: markdown
     attributes:
-      options:
-        - label: DO NOT REMOVE OR SKIP THE ISSUE TEMPLATE
+      value: |
+        DO NOT REMOVE OR SKIP THE ISSUE TEMPLATE
   - type: checkboxes
     id: checklist
     attributes:
