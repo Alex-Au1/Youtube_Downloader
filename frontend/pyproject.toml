@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Youtube_Video_Audio_Downloader"
+version = "1.0.0"
+authors = [
+  {name="Alex Au", email="AlexXianZhenYuAu@gmail.com"}
+]
+description = "A simple GUI interface to help download videos and audio files from Youtube using Youtube-dl and FFMPEG"
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  "Pillow",
+  "pyperclip",
+  "yt-dlp",
+  "youtube-search-python",
+  "mutagen",
+  "requests",
+  "validators"
+]
+
+[project.urls]
+Homepage = "https://github.com/Alex-Au1/Youtube_Downloader"
+Repository = "https://github.com/Alex-Au1/Youtube_Downloader"
