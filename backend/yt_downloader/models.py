@@ -237,14 +237,13 @@ class YoutubeDownload():
     
     # get_download(): Retrieves the downloaded file
     def get_download(self):
-        result = Finished_Download[self._id]
-
+        result = Finished_Download.get(self._id)
         if (result is None):
             return result
         
         Finished_Download.pop(self._id, None)
 
-        result = FileResponse(open(result, "rb"), as_attachment = True)
+        result = FileResponse(open(result, "rb"), as_attachment = True, filename = os.path.basename(result))
         return result
 
 
@@ -371,7 +370,11 @@ class YoutubeDownload():
                 "folder": folder,
                 "video": video,
                 "download_id": self._id}
+    
 
+    # clean_download(): Removes all the files/folders related to a specific download
+    def clean_download(self):
+        shutil.rmtree(self._folder)
 
     #retrieves the meta data from the selected video
     @classmethod

@@ -54,5 +54,16 @@ class DownloaderView():
         
         result = YoutubeDownload.get_metadata(link, opts)
         return JsonResponse(result)
-
     
+    @classmethod
+    def clean_download(cls, request: HttpRequest) -> JsonResponse:
+        download_id = request.GET.get("download_id")
+        exists = False
+
+        download = Downloads.pop(download_id, None)
+        if (download is None):
+            return JsonResponse({"exists": exists})
+        
+        download.clean_download()
+        exists = True
+        return JsonResponse({"exists": exists})
