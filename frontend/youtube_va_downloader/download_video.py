@@ -6,6 +6,7 @@ import os, validators, pathlib
 
 
 VideoMetadata = None
+Fetch_Progress = False
 Last_Progress_Time = None
 Last_Progress = ""
 
@@ -69,7 +70,7 @@ THUMBNAIL_EMBED_FORMATS = [audio_filetypes["mp3"], video_filetypes["mkv"], audio
 class DLUtils():
     #move the video to the desired file location
     @classmethod
-    def move_video(cls, video_file_name, folder, video):
+    def move_video(cls, video_file_name: str, folder: str, video):
         global Last_Progress
         Last_Progress = "Moving File to Selected Directory..."
 
@@ -77,8 +78,12 @@ class DLUtils():
 
         #move the file to the downloaded folder
         path = os.getcwd()
-        old_path = f"{path}/{video_file_name}"
-        new_path = f"{folder}/{video_file_name}"
+        old_path = os.path.join(path, video_file_name)
+        new_path = os.path.join(folder, video_file_name)
+
+        video_basename_parts = video_file_name.rsplit(".", 1)
+        video_basename = video_basename_parts[0]
+        video_ext = "" if (len(video_basename_parts) == 1) else video_basename_parts[1]
 
         # get the number of existing file names in the new folder
         existing_file_no = 0
@@ -92,21 +97,11 @@ class DLUtils():
         #rename the file if the file already exists
         while (os.path.exists(new_path)):
             copy_no += 1
+            video_basename = f"{video_basename} ({copy_no})"
 
-            #find the position of the dot in the file extension
-            for i in range (len(basefile)):
-                if (basefile[len(basefile) - 1 - i] == "."):
-                    dot_pos = len(basefile) - 1 - i
-                    break
-
-            if(copy_no > 1):
-                basefile = basefile[:dot_pos - 4] + basefile[dot_pos:]
-                dot_pos -= 4
-
-            basefile = basefile[:dot_pos] + f" ({copy_no})" + basefile[dot_pos:]
-
-
-            new_path = f"{folder}/{basefile}"
+            new_path = os.path.join(folder, video_basename)
+            if (video_ext):
+                new_path += f".{video_ext}"
 
         #try to move the file into the new folder, else move it to a folder in the current directory of the program
         try:
@@ -115,7 +110,10 @@ class DLUtils():
             if not os.path.exists(tmp_folder):
                 os.makedirs(tmp_folder)
 
-            new_path = f"{path}/{tmp_folder}/{basefile}"
+            new_path = f"{path}/{tmp_folder}/{video_basename}"
+            if (video_ext):
+                new_path += f".{video_ext}"
+
             Last_Progress = f"Cannot Move File to Selected Directory,\nMoving File to Default Directory Location at {new_path}"
             os.rename(old_path, new_path)
 
@@ -134,6 +132,10 @@ class DLUtils():
             uploader = video["channel"]["name"]
 
             audio = mutagen.File(path, easy=True)
+
+            if ('albumartist' not in audio):
+                audio['albumartist'] = uploader
+
             audio['album'] = album_name
             audio['albumartist'] = uploader
             audio['tracknumber'] = f"{track_no + 1}"
