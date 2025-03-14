@@ -17,7 +17,7 @@ class DownloadRequests():
         return result.json()
     
     @classmethod
-    def get_cached_progress(cls):``
+    def get_cached_progress(cls):
         global Last_Progress_Time, Last_Progress
 
         current_progress_time = timer()
@@ -46,6 +46,8 @@ class DownloadRequests():
         downloadComplete = False
         while (not downloadComplete):
             fileRequest = requests.get(f"{Host_Url}/get_download/", params = {"download_id": Download_Id})
+            print(f"HEADERS: {fileRequest.headers}\n")
+
             try:
                 fileRequest = fileRequest.json()
             except:
@@ -63,6 +65,6 @@ class DownloadRequests():
                 Last_Progress = ""
                 break
             
-            time.sleep(1)
+            time.sleep(5)
 
         return result
