@@ -9,6 +9,7 @@ from .search_video import search_youtube_video
 from .format_display import FormatUtils
 from .download_video import YtDownloadFormat, audio_filetypes, DLUtils
 from .set_up import SetupFile
+from .download_requests import DownloadRequests
 
 
 #list to store the remembered photos
@@ -271,7 +272,7 @@ class NestedRadioButton():
             except:
                 path = video_download_thread.restart()
 
-            app.loading_page.check_running_thread(video_download_thread, app.download_finish_sc, [root, app.loading_page, self.page_found], "download", DLUtils.get_progress)
+            app.loading_page.check_running_thread(video_download_thread, app.download_finish_sc, [root, app.loading_page, self.page_found], "download", DownloadRequests.get_cached_progress)
 
 
     #hides all the children of the current NestedRadioButton that are displayed on the screen
@@ -406,11 +407,11 @@ class LoadingPage:
 
 
     #Displays the LoadingPage on screen when a thread is running
-    def check_running_thread(self, thread_class,func, args = [], key=None, word_update_func = None, word_update_args = []):
+    def check_running_thread(self, thread_class,func, args = [], key=None, word_update_func = None, word_update_args = [], delay = 25):
         #animate the loading bar when the thread is running
         if (thread_class._running):
             self.animate(word_update_func, word_update_args)
-            app.after(25, lambda: self.check_running_thread(thread_class, func, args, key, word_update_func, word_update_args))
+            app.after(delay, lambda: self.check_running_thread(thread_class, func, args, key, word_update_func, word_update_args))
 
         #runs the desired function once the thread has completed running
         else:
@@ -1494,9 +1495,9 @@ if (__name__ != "__main__"):
 
     #threads to search, download, or get meta data from videos
     search_wrap_thread = threading.Thread(target=word_wrap.wrap_search_text, args=[])
-    video_download_thread = ProcessThread(target=DLUtils.prepare_download, args=[None, None, None], key="download", return_value=True)
+    video_download_thread = ProcessThread(target=DownloadRequests.prepare_download, args=[None, None, None], key="download", return_value=True)
     search_video_thread = ProcessThread(target=search_videos, args=[None, None], key="search", return_value=True)
-    meta_data_thread = ProcessThread(target=DLUtils.get_metadata, args=[None], key="meta", return_value=True)
+    meta_data_thread = ProcessThread(target=DownloadRequests.get_metadata, args=[None], key="meta", return_value=True)
     video_download_thread.daemon = True
     search_video_thread.daemon = True
     meta_data_thread.daemon = True

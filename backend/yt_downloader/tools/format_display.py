@@ -3,9 +3,6 @@ from PIL import ImageTk, Image
 from io import BytesIO
 import pyperclip
 
-from .set_up import limits as SETUP_LIMITS
-from .set_up import default as SETUP_DEFAULTS
-
 
 # FormatUtils: Set of Tools for formatting/pretty printing
 class FormatUtils():
@@ -143,28 +140,6 @@ class FormatUtils():
         return date[:4] + "/" + date[4:6] + "/" + date[6:]
 
 
-    '''
-    format_settings(key, value) Changes 'value' to be within the bounds of 'key'
-    format_settings: str, str -> str
-    '''
-    @classmethod
-    def format_settings(cls, key, value):
-        if (key == 'results/search' or key == 'results/page'):
-            if (value.isnumeric()):
-                if (int(value) < SETUP_LIMITS["results/search"]["min"]):
-                    value = str(SETUP_LIMITS["results/search"]["min"])
-                elif (int(value) > SETUP_LIMITS["results/search"]["max"]):
-                    value = str(SETUP_LIMITS["results/search"]["max"])
-
-            else:
-                if (key == 'results/search'):
-                    value = str(SETUP_DEFAULTS["results/search"])
-                else:
-                    value = str(SETUP_DEFAULTS['results/page'])
-
-        return value
-
-
     # remove_ansi_codes(txt): removes the ANSI escape sequences from 'txt'
     @classmethod
     def remove_ansi_codes(cls, txt: str) -> str:
@@ -186,7 +161,7 @@ class FormatUtils():
         img_data = response.content
         photo = Image.open(BytesIO(img_data))
 
-        return photo.resize((img_w, img_h),Image.Resampling.LANCZOS)
+        return photo.resize((img_w, img_h),Image.ANTIALIAS)
 
 
     #gets the image to be displayed
