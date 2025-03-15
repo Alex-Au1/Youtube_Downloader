@@ -6,10 +6,13 @@ from threading import Thread
 import uuid
 import shutil
 import os
+import errno
+import stat
 from enum import Enum
 from typing import Dict, Any, Optional
 
 from .tools.format_display import FormatUtils
+from .secrets import Download_Folder
 
 
 #options for downloading the youtube video
@@ -20,11 +23,6 @@ Finished_Download = {}
 
 BG_Utils_Generate_Paths = r"C:/Dependencies/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
 Extractor_Args = {'youtube': {'getpot_bgutil_script': [BG_Utils_Generate_Paths]}}
-
-
-# Download paths
-Download_Folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "downloads")
-
 
 
 #formats for downloading the video from Youtube
@@ -355,7 +353,7 @@ class YoutubeDownload():
         try:
             os.mkdir(self._folder)
         except FileExistsError:
-            shutil.rmtree(self._folder)
+            self.remove_folder_tree(self._folder)
             os.mkdir(self._folder)
 
         ydl_opts["paths"] = {"home": self._folder, 
@@ -374,7 +372,19 @@ class YoutubeDownload():
 
     # clean_download(): Removes all the files/folders related to a specific download
     def clean_download(self):
-        shutil.rmtree(self._folder)
+        self.remove_folder_tree(self._folder)
+
+    # removeFolderTree(folder): Recursively removes a folder and its content
+    @classmethod
+    def remove_folder_tree(cls, folder: str):
+        shutil.rmtree(folder, onexc=cls.remove_readonly)
+
+    # handleRemoveReadonly(func, path, exc): Changes the permission of some file/folder to not be readonly
+    #   then remove it
+    @classmethod
+    def remove_readonly(cls, func, path, excinfo):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
 
     #retrieves the meta data from the selected video
     @classmethod

@@ -42,7 +42,7 @@ class DownloaderView():
         download_id = request.GET.get("download_id")
 
         download = Downloads.get(download_id)
-        result = download.get_progress() if (download is not None) else ""
+        result = download.get_progress() if (download is not None) else "Download Id Not Registered"
 
         return JsonResponse({"progress": result})
 
@@ -64,6 +64,11 @@ class DownloaderView():
         if (download is None):
             return JsonResponse({"exists": exists})
         
-        download.clean_download()
-        exists = True
+        try:
+            download.clean_download()
+        except PermissionError:
+            pass
+        else:
+            exists = True
+
         return JsonResponse({"exists": exists})

@@ -6,7 +6,7 @@ from .download_video import Last_Progress_Time, Last_Progress, VideoMetadata, DL
 from typing import Optional, Dict, Any
 
 
-Host_Url = r"http://192.168.1.72:9001"
+Host_Url = r"http://localhost:9001"
 Download_Id = None
 
 
@@ -75,8 +75,8 @@ class DownloadRequests():
         with open(file_name, 'wb') as f:
             f.write(fileRequest.content)
 
-        requests.get(f"{Host_Url}/clean_download/", params = {"download_id": Download_Id})
         result = DLUtils.move_video(file_name, folder, VideoMetadata)
 
+        requests.get(f"{Host_Url}/clean_download/", params = {"download_id": Download_Id})
         Fetch_Progress = True
         return result
