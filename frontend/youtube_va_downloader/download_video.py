@@ -2,6 +2,7 @@ from __future__ import unicode_literals
 from enum import Enum
 import validators
 import mutagen
+import shutil
 import os, validators, pathlib
 
 
@@ -105,7 +106,7 @@ class DLUtils():
 
         #try to move the file into the new folder, else move it to a folder in the current directory of the program
         try:
-            os.rename(old_path, new_path)
+            shutil.move(old_path, new_path)
         except:
             if not os.path.exists(tmp_folder):
                 os.makedirs(tmp_folder)
@@ -115,7 +116,7 @@ class DLUtils():
                 new_path += f".{video_ext}"
 
             Last_Progress = f"Cannot Move File to Selected Directory,\nMoving File to Default Directory Location at {new_path}"
-            os.rename(old_path, new_path)
+            shutil.move(old_path, new_path)
 
         return cls.fill_metadata(new_path, video_file_name, video, existing_file_no)
     

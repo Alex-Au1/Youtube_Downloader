@@ -298,6 +298,38 @@ class NestedRadioButton():
             self.folder_frame.pack_forget()
 
 
+# EntrySlider: Slider with a text box entry
+class EntrySlider():
+    def __init__(self, root: Widget, defaultVal: int, entryWidth: int = 3, onEntryEnter = None):
+        self.data = IntVar()
+        self.data.set(defaultVal)
+
+        self.entryWidth = entryWidth
+
+        self.root = root
+        self._frame = None
+        self._entry = None
+        self._scale = None
+
+        self.onEntryEnter = onEntryEnter
+
+    def pack(self):
+        self._frame = Frame(self.root, bg="black", relief="sunken")
+        self._entry = Entry(self._frame, width=3)
+        self.set_text(self._entry, setting_data["results/search"])
+        self._frame.pack(ipady=1, ipadx=1)
+        self._entry.bind("<Button-1>", lambda event, root=self._frame: root.config(bg="red"))
+
+        if (self.onEntryEnter is not None):
+            self._entry.bind("<Return>", self.onEntryEnter)
+
+        self._entry.pack(expand="yes")
+        self._scale = Scale(self.root, variable = self.data ,  from_ = 1, to = 100,  command=lambda text, root = self._entry:self.set_text(root, text),orient = "horizontal", bg="white", highlightbackground="white")
+        self._scale.pack()
+
+    def set_text(self, root, text):
+        root.delete(0,END)
+        root.insert(0,text)
 
 
 #Loading page to display when another thread is running
@@ -1077,7 +1109,7 @@ class Application(Frame):
         download_questions = NestedRadioButton(dl_master,"Choose a Download Option:",
             {"Audio":NestedRadioButton(dl_master,"Choose a download quality",
                 {"best quality": NestedRadioButton(dl_master,"Choose a Format",available_audio_formats, video, page_found),
-                    "worst quality": NestedRadioButton(dl_master,"Choose a Format",available_audio_formats, video, page_found)}),
+                 "worst quality": NestedRadioButton(dl_master,"Choose a Format",available_audio_formats, video, page_found)}),
              "Video":NestedRadioButton(dl_master,"Choose a download quality",
                 {"best quality": NestedRadioButton(dl_master,"Do you want audio to be included?",
                     {"Yes! Download video with audio.":NestedRadioButton(dl_master,"Choose an audio download quality",

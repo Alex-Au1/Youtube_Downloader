@@ -1,12 +1,13 @@
 import requests
 import time
+import re
 from timeit import default_timer as timer
 from .format_display import FormatUtils
 from .download_video import Last_Progress_Time, Last_Progress, VideoMetadata, DLUtils, Fetch_Progress
 from typing import Optional, Dict, Any
 
 
-Host_Url = r"http://localhost:9001"
+Host_Url = r"http://192.168.1.72:9001"
 Download_Id = None
 
 
@@ -39,6 +40,7 @@ class DownloadRequests():
         global Download_Id, Last_Progress, Last_Progress_Time, VideoMetadata, Fetch_Progress
 
         Last_Progress = "Sending Request to Server..."
+        Download_Id = None
 
         result = requests.post(f"{Host_Url}/prepare_download/", json = {"video": video, "options": options, "folder": folder})
         result = result.json()
@@ -64,6 +66,10 @@ class DownloadRequests():
                 content_disposition = fileRequest.headers['content-disposition']
 
                 file_ext = content_disposition.rsplit(".", 1)[1]
+                file_ext_match = re.match("[A-Za-z0-9]*", file_ext)
+                if (file_ext_match):
+                    file_ext = file_ext_match.group()
+
                 video_name = video["title"]
                 video_id = video["id"]
                 file_name = FormatUtils.format_filename(f"{video_name} - {video_id}.{file_ext}")
