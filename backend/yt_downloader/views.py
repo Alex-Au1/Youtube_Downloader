@@ -41,6 +41,9 @@ class DownloaderView():
     def get_progress(cls, request: HttpRequest) -> JsonResponse:
         download_id = request.GET.get("download_id")
 
+        if (download_id is None):
+            return JsonResponse({"progress": "No Download Id Given"})
+
         download = Downloads.get(download_id)
         result = download.get_progress() if (download is not None) else "Download Id Not Registered"
 

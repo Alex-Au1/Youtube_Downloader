@@ -83,7 +83,7 @@ THUMBNAIL_EMBED_FORMATS = [audio_filetypes["mp3"], video_filetypes["mkv"], audio
 # YoutubeDownload: Class to deal with downloading Youtube videos
 class YoutubeDownload():
     def __init__(self):
-        self._id = str(uuid.uuid4())
+        self._id = str(uuid.uuid4().hex)
         self._folder: Optional[str] = None
 
     @property
