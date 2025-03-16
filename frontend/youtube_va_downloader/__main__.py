@@ -1,4 +1,4 @@
-import youtube_va_downloader
+from .youtube_downloader import run_main
 
 if __name__ == '__main__':
-    youtube_va_downloader.main()
+    run_main(False)
