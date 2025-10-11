@@ -13,6 +13,11 @@ Download_Id = None
 
 class DownloadRequests():
     @classmethod
+    def changeHostUrl(cls, newUrl: str):
+        global Host_Url
+        Host_Url = newUrl
+
+    @classmethod
     def get_metadata(cls, link: str, opts: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         result = requests.get(f"{Host_Url}/get_metadata/", params = {"link": link, "opts": opts})
         return result.json()
@@ -32,8 +37,11 @@ class DownloadRequests():
     
     @classmethod
     def get_progress(cls):
+        global Download_Id
         result = requests.get(f"{Host_Url}/get_progress/", params = {"download_id": Download_Id})
-        return result.json()["progress"]
+        
+        result = result.json()["progress"]
+        result = f"{result}, ID: {Download_Id}"
     
     @classmethod
     def prepare_download(cls, video, options, folder):

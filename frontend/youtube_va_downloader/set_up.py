@@ -6,7 +6,7 @@ limits = {"results/search":{"min":1, "max":100},
           "results/page":{"min":1, "max": 100}}
 
 #default values for the setting attributes
-default = {"results/search":30, "results/page":10}
+default = {"results/search":30, "results/page":10, "host_url": r"http://192.168.1.72:9001"}
 
 
 #for editting, viewing lines in the setup file
@@ -23,7 +23,8 @@ class SetupFile():
 
         if (not make_txt):
             return {"results/search": default["results/search"],
-                    "results/page": default["results/page"]}
+                    "results/page": default["results/page"],
+                    "host_url": default["host_url"]}
         else:
             #open/create the file
             file = open(self.path, "a+")
@@ -40,7 +41,7 @@ class SetupFile():
             #if the file is just created or the file does not contain anything or has less lines than required
             if (len(file_source) < self.no_of_lines):
                 file = open(self.path, "w")
-                file.write(f"{default['results/search']}\n{default['results/page']}")
+                file.write(f"{default['results/search']}\n{default['results/page']}\n{default['host_url']}")
                 file.close()
                 return default
 
@@ -51,10 +52,6 @@ class SetupFile():
                 #if the file contains more lines than required
                 if (len(file_source) > self.no_of_lines):
                     file_source = file_source[:self.no_of_lines]
-
-                #strip whitespaces to the left and right of each line
-                for i in range(len(file_source)):
-                    file_source[i] = file_source[i].strip()
 
                 #check if the first 2 lines are either numbers from 1-20
                 for i in range(2):
@@ -73,6 +70,7 @@ class SetupFile():
 
 
                 #rewrite the file if it is invalid
+                data["host_url"] = file_source[2]
                 if (not valid_file):
                     self.change_data(data)
 

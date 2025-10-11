@@ -14,6 +14,7 @@ class DownloaderView():
     @classmethod
     @csrf_exempt
     def prepare_download(cls, request: HttpRequest) -> JsonResponse:
+        global Downloads
         post_data = json.loads(request.body.decode('utf-8'))
         video = post_data["video"]
         options = post_data["options"]
@@ -27,6 +28,7 @@ class DownloaderView():
     
     @classmethod
     def get_download(cls, request: HttpRequest) -> JsonResponse:
+        global Downloads
         download_id = request.GET.get("download_id")
 
         download = Downloads.get(download_id)
@@ -39,13 +41,14 @@ class DownloaderView():
     
     @classmethod
     def get_progress(cls, request: HttpRequest) -> JsonResponse:
+        global Downloads
         download_id = request.GET.get("download_id")
 
         if (download_id is None):
             return JsonResponse({"progress": "No Download Id Given"})
 
         download = Downloads.get(download_id)
-        result = download.get_progress() if (download is not None) else "Download Id Not Registered"
+        result = download.get_progress() if (download is not None) else f"Download Id Not Registered \n RECV: {download_id}\n AND ALL DOWNLOADS: {Downloads}"
 
         return JsonResponse({"progress": result})
 
@@ -60,6 +63,7 @@ class DownloaderView():
     
     @classmethod
     def clean_download(cls, request: HttpRequest) -> JsonResponse:
+        global Downloads
         download_id = request.GET.get("download_id")
         exists = False
 

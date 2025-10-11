@@ -1487,6 +1487,7 @@ def run_main(make_txt_setup: bool = False):
             setting_file = SetupFile("setup.txt", file_dir)
 
         setting_data = setting_file.get_data()
+        DownloadRequests.changeHostUrl(setting_data["host_url"])
 
         root.config(menu=menu_bar, bg="white")
 
