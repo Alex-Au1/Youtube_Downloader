@@ -1088,6 +1088,8 @@ class Application(Frame):
         available_video_formats["mkv"] = "mkv"
         available_video_formats["don't care"] = "don't care"
 
+        available_video_formats = dict(sorted(available_video_formats.items(), key=lambda item: item[1]))
+
         #audio formats to download video
         available_audio_formats = {}
         for audio_format in audio_filetypes.values():
