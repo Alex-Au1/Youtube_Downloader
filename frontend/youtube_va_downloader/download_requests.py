@@ -42,6 +42,7 @@ class DownloadRequests():
         
         result = result.json()["progress"]
         result = f"{result}, ID: {Download_Id}"
+        return result
     
     @classmethod
     def prepare_download(cls, video, options, folder):
