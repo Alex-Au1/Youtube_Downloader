@@ -7,7 +7,7 @@ from PIL import ImageTk, Image
 
 from .search_video import search_youtube_video
 from .format_display import FormatUtils
-from .download_video import YtDownloadFormat, audio_filetypes, DLUtils
+from .download_video import YtDownloadFormat, audio_filetypes, DLUtils, VideoCodes
 from .set_up import SetupFile
 from .download_requests import DownloadRequests
 
@@ -1067,12 +1067,7 @@ class Application(Frame):
         #all the video formats for download
         download_formats = meta["formats"]
         available_formats = DLUtils.get_available_formats(download_formats)
-        video_codes  = [YtDownloadFormat.mp4_144p.value, YtDownloadFormat.mp4_240p.value,
-                        YtDownloadFormat.mp4_360p.value, YtDownloadFormat.mp4_480p.value,
-                        YtDownloadFormat.mp4_720p.value, YtDownloadFormat.mp4_1080p.value,
-                        YtDownloadFormat.mp4_640x360.value, YtDownloadFormat.mp4_1280x720.value,
-                        YtDownloadFormat.gp3_176x144.value, YtDownloadFormat.gp3_320x240.value,
-                        YtDownloadFormat.flv.value]
+        video_codes  = VideoCodes.get_all_codes()
 
         avail_video_formats = []
 
