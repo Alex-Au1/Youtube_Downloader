@@ -9,7 +9,7 @@ import os
 import errno
 import stat
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from .tools.format_display import FormatUtils
 from .secrets import Download_Folder
@@ -20,12 +20,14 @@ Download_Progress = {}
 File_Download_Type = {}
 Download_No = {}
 Finished_Download = {}
+Sending_Download = set()
 
 BG_Utils_Generate_Paths = r"C:\Users\AlexX\Documents\Dependencies\BgUtils Pot Provider\bgutil-ytdlp-pot-provider\server\build\generate_once.js"
-Extractor_Args = {'youtube': {'getpot_bgutil_script': [BG_Utils_Generate_Paths]}}
+Extractor_Args = {'youtubepot-bgutilscript': {'script_path': [BG_Utils_Generate_Paths]}}
 
 
 #formats for downloading the video from Youtube
+# https://gist.github.com/MartinEesmaa/2f4b261cb90a47e9c41ba115a011a4aa
 class YtDownloadFormat(Enum):
     only_best = "best"
     only_worst = "worst"
@@ -52,28 +54,126 @@ class YtDownloadFormat(Enum):
     gp3_320x240 = "36"
     flv = "5"
 
+    m4a_dup = "234"
+    mp4_144p_dup = "269"
+    mp4_240p_dup = "229"
+    mp4_360p_dup = "230"
+    mp4_480p_dup = "231"
+    mp4_720p_dup = "232"
+    mp4_1080p_dup = "270"
+    mp4_1280x720_dup = "298"
+    mp4_1280x720_dup2 = "311"
+
 
 #file type extensions
 video_filetypes = {"mp4":"mp4", "gp3":"3gp", "flv":"flv", "avi":"avi", "mkv":"mkv", "webm":"webm"}
 audio_filetypes = {"mp3":"mp3", "wav":"wav", "aac":"aac", "ogg":"vorbis", "m4a":"m4a", "opus": "opus", "flac": "flac"}
 
 
+class VideoCodes(Enum):
+    mp4_144p = ["160", "269"]
+    mp4_240p = ["133", "229"]
+    mp4_360p = ["134", "230"]
+    mp4_480p = ["135", "231"]
+    mp4_720p = ["136", "232"]
+    mp4_1080p = ["137", "270"]
+    mp4_256x144 = ["602", "269", "603"]
+    mp4_426x240 = ["229", "604"]
+    mp4_640x360 = ["230", "605"]
+    mp4_854x480 = ["231", "606"]
+    mp4_1280x720 = ["232", "609", "311"]
+    mp4_1920x1080 = ["270", "614", "617", "312"]
+    mp4_2560x1440 = ["620", "623"]
+    mp4_3840x2160 = ["625", "628"]
+
+    @classmethod
+    def get_all_codes(cls) -> List[str]:
+        result = []
+        for code in cls:
+            result += code.value
+
+        return result
+    
+    @classmethod
+    def get_code_displays(cls, result: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        if (result is None):
+            result = {}
+
+        displays = {
+            "mp4_144p": ("mp4 144p", ["https", "m3u8"]),
+            "mp4_240p": ("mp4 240p", ["https", "m3u8"]),
+            "mp4_360p": ("mp4 360p", ["https", "m3u8"]),
+            "mp4_480p": ("mp4 480p", ["https", "m3u8"]),
+            "mp4_720p": ("mp4 720p", ["https", "m3u8"]),
+            "mp4_1080p": ("mp4 1080p", ["https", "m3u8"]),
+            "mp4_256x144": ("mp4 256x144", ["vp9 87k m3u8", "avc1 175k m3u8", "vp9 156k m3u8"]),
+            "mp4_426x240": ("mp4 426x240", ["avc1 327k m3u8", "vp9 289k m3u8"]),
+            "mp4_640x360": ("mp4 640x360", ["avc1 812k m3u8", "vp9 567k m3u8"]),
+            "mp4_854x480": ("mp4 854x480", ["avc1 1358k m3u8", "vp9 926k m3u8"]),
+            "mp4_1280x720": ("mp4 1280x720", ["avc1 2640k m3u8", "vp9 1705k m3u8", "avc1 4842k m3u8"]),
+            "mp4_1920x1080": ("mp4 1920x1080", ["avc1 4694k m3u8", "vp9 2940k m3u8", "vp9 6443k m3u8", "avc1 7987k m3u8"]),
+            "mp4_2560x1440": ("mp4 2560x1440", ["vp9 8745k m3u8", "vp9 16287k m3u8"]),
+            "mp4_3840x2160": ("mp4_3840x2160", ["vp9 18661k m3u8", "vp9 35007k m3u8"])
+        }
+
+        for key in displays:
+            current_enum = getattr(cls, key)
+            prefix, suffixes = displays[key]
+
+            codes = current_enum.value
+            codesLen = len(codes)
+            
+            for i in range(codesLen):
+                code = codes[i]
+                suffix = suffixes[i]
+                result[code] = f"{prefix} ({suffix})"
+
+        return result
+    
+    @classmethod
+    def get_extensions(cls, result: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        if (result is None):
+            result = {}
+
+        displays = {
+            "mp4_144p": video_filetypes["mp4"],
+            "mp4_240p": video_filetypes["mp4"],
+            "mp4_360p": video_filetypes["mp4"],
+            "mp4_480p": video_filetypes["mp4"],
+            "mp4_720p": video_filetypes["mp4"],
+            "mp4_1080p": video_filetypes["mp4"],
+            "mp4_256x144": video_filetypes["mp4"],
+            "mp4_426x240": video_filetypes["mp4"],
+            "mp4_640x360": video_filetypes["mp4"],
+            "mp4_854x480": video_filetypes["mp4"],
+            "mp4_1280x720": video_filetypes["mp4"],
+            "mp4_1920x1080": video_filetypes["mp4"],
+            "mp4_2560x1440": video_filetypes["mp4"],
+            "mp4_3840x2160": video_filetypes["mp4"]
+        }
+
+        for key in displays:
+            current_enum = getattr(cls, key)
+            current_val = displays[key]
+
+            for code in current_enum.value:
+                result[code] = current_val
+
+        return result
+
+
 
 #codes for the different download options
-code_display = {YtDownloadFormat.mp4_144p.value: "mp4 144p", YtDownloadFormat.mp4_240p.value: "mp4 240p",
-                YtDownloadFormat.mp4_360p.value:"mp4 360p", YtDownloadFormat.mp4_480p.value:"mp4 480p",
-                YtDownloadFormat.mp4_720p.value:"mp4 720p", YtDownloadFormat.mp4_1080p.value:"mp4 1080p",
-                YtDownloadFormat.mp4_640x360.value:"mp4 640x360", YtDownloadFormat.mp4_1280x720.value:"mp4 1280x720",
-                YtDownloadFormat.gp3_176x144.value:"3gp 176x144", YtDownloadFormat.gp3_320x240.value:"3gp 320x240",
+code_display = {YtDownloadFormat.gp3_176x144.value:"3gp 176x144", YtDownloadFormat.gp3_320x240.value:"3gp 320x240",
                 YtDownloadFormat.flv.value:"flv"}
 
+code_display = VideoCodes.get_code_displays(result = code_display)
+
 #extensions for the different download options
-extension_display = {YtDownloadFormat.mp4_144p.value: video_filetypes["mp4"], YtDownloadFormat.mp4_240p.value: video_filetypes["mp4"],
-                     YtDownloadFormat.mp4_360p.value:video_filetypes["mp4"], YtDownloadFormat.mp4_480p.value:video_filetypes["mp4"],
-                     YtDownloadFormat.mp4_720p.value:video_filetypes["mp4"], YtDownloadFormat.mp4_1080p.value:video_filetypes["mp4"],
-                     YtDownloadFormat.mp4_640x360.value:video_filetypes["mp4"], YtDownloadFormat.mp4_1280x720.value:video_filetypes["mp4"],
-                     YtDownloadFormat.gp3_176x144.value:video_filetypes["gp3"], YtDownloadFormat.gp3_320x240.value:video_filetypes["gp3"],
+extension_display = {YtDownloadFormat.gp3_176x144.value:video_filetypes["gp3"], YtDownloadFormat.gp3_320x240.value:video_filetypes["gp3"],
                      YtDownloadFormat.flv.value:video_filetypes["flv"]}
+
+extension_display = VideoCodes.get_extensions(result = extension_display)
 
 
 # Extensions that support embeding of thumbnails
@@ -141,9 +241,7 @@ class YoutubeDownload():
 
                 #video type desired for the download
                 if (not(options[4] == "don't care")):
-                    for c in code_display:
-                        if (code_display[c] == options[4]):
-                            video_type = c
+                    video_type = options[4]
 
                 download_type["video"] = video_type
                 audio_type = "+" + audio_type
@@ -151,9 +249,7 @@ class YoutubeDownload():
             else:
                 #video type desired for the download
                 if (not(options[3] == "don't care")):
-                    for c in code_display:
-                        if (code_display[c] == options[3]):
-                            video_type = c
+                    video_type = options[3]
 
                 download_type["video"] = video_type
 
@@ -217,7 +313,7 @@ class YoutubeDownload():
                 Download_Progress[self._id] = f"{file_type} Finished Downloading, Now Converting..."
 
         #when the video is still downloading, display the progress
-        if d['status'] == 'downloading':
+        elif d['status'] == 'downloading':
             current_size = FormatUtils.remove_ansi_codes(d['_downloaded_bytes_str'])
             total_size = FormatUtils.remove_ansi_codes(d['_total_bytes_str'])
 
@@ -228,6 +324,9 @@ class YoutubeDownload():
 
             Download_Progress[self._id] = f"Downloading {file_type}...    Progress: {percent} ({current_size} / {total_size}), ETA: {eta}, Speed: {speed}"
 
+        elif (self._id in Sending_Download):
+            Download_Progress[self._id] = f"Sending and Compiling File..."
+
 
     #returns the download progress to the main app
     def get_progress(self):
@@ -235,11 +334,9 @@ class YoutubeDownload():
     
     # get_download(): Retrieves the downloaded file
     def get_download(self):
-        result = Finished_Download.get(self._id)
+        result = Finished_Download.pop(self._id, None)
         if (result is None):
             return result
-        
-        Finished_Download.pop(self._id, None)
 
         result = FileResponse(open(result, "rb"), as_attachment = True, filename = os.path.basename(result))
         return result
@@ -261,7 +358,6 @@ class YoutubeDownload():
 
             self.__download_video(ydl_opts, video)
 
-        Download_Progress.pop(self._id, None)
         File_Download_Type.pop(self._id, None)
         Download_No.pop(self._id, None)
 
@@ -271,6 +367,7 @@ class YoutubeDownload():
                 break
 
         Finished_Download[self._id] = os.path.join(self._folder, basefile)
+        Sending_Download.add(self._id)
 
     # _download_video(ydl_opts, link): Downloads a video
     @classmethod
@@ -373,6 +470,8 @@ class YoutubeDownload():
     # clean_download(): Removes all the files/folders related to a specific download
     def clean_download(self):
         self.remove_folder_tree(self._folder)
+        Sending_Download.remove(self._id)
+        Download_Progress.pop(self._id, None)
 
     # removeFolderTree(folder): Recursively removes a folder and its content
     @classmethod

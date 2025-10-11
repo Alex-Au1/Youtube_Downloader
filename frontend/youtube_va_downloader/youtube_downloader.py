@@ -171,7 +171,13 @@ class NestedRadioButton():
         #creates the radio buttons if they are not made yet
         if (not self.options):
             for c in self.children:
-                radio_button = Radiobutton(self.button_frame, text=c, variable=self.var, value=c, command=self.button_selected, bg="white", cursor="hand2")
+                text = c
+                value = c
+
+                if (not isinstance(self.children[c], type(self))):
+                    text = self.children[c]
+
+                radio_button = Radiobutton(self.button_frame, text=text, variable=self.var, value=value, command=self.button_selected, bg="white", cursor="hand2")
                 self.options.append(radio_button)
                 radio_button.pack(ipady="5")
 
@@ -207,7 +213,7 @@ class NestedRadioButton():
             self.folder_frame.pack_forget()
 
         #copy the current remembered options to the selected child
-        if (selected_child is not None):
+        if (isinstance(selected_child, type(self))):
             selected_child.query = self.query
 
             selected_child.make_button()
@@ -278,7 +284,7 @@ class NestedRadioButton():
     #hides all the children of the current NestedRadioButton that are displayed on the screen
     def unpack_children(self):
         for c in self.children:
-            if (self.children[c] is not None):
+            if (isinstance(self.children[c], type(self))):
                 self.children[c].forget_options()
                 self.children[c].unpack_children()
 
@@ -1069,29 +1075,25 @@ class Application(Frame):
         available_formats = DLUtils.get_available_formats(download_formats)
         video_codes  = VideoCodes.get_all_codes()
 
-        avail_video_formats = []
+        available_video_formats = {}
 
         #find the available video formats to download for the selected video
         for c in video_codes:
             if (c in available_formats):
-                avail_video_formats.append(c)
+                display = DLUtils.get_code_display(c)
+                available_video_formats[c] = display
 
-        video_formats = DLUtils.format_filetype(avail_video_formats)
+        available_video_formats["avi"] = "avi"
+        available_video_formats["webm"] = "webm"
+        available_video_formats["mkv"] = "mkv"
+        available_video_formats["don't care"] = "don't care"
+
+        available_video_formats = dict(sorted(available_video_formats.items(), key=lambda item: item[1]))
 
         #audio formats to download video
-        available_audio_formats = {audio_filetypes["mp3"]:None, audio_filetypes["m4a"]:None, "ogg":None, audio_filetypes["aac"]:None,
-                                   audio_filetypes["wav"]:None, audio_filetypes["opus"]: None, audio_filetypes["flac"]: None, "don't care":None}
-
-        available_video_formats = {}
-
-        for v in video_formats:
-            available_video_formats[video_formats[v]] = None
-
-        available_video_formats["avi"] = None
-        available_video_formats["webm"] = None
-        available_video_formats["mkv"] = None
-        available_video_formats["don't care"] = None
-
+        available_audio_formats = {}
+        for audio_format in audio_filetypes.values():
+            available_audio_formats[audio_format] = audio_format
 
         #frame to contain all of the questions
         dl_master = download_pages_lsts[key].inner_frame

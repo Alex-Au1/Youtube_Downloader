@@ -41,7 +41,6 @@ class DownloadRequests():
         result = requests.get(f"{Host_Url}/get_progress/", params = {"download_id": Download_Id})
         
         result = result.json()["progress"]
-        result = f"{result}, ID: {Download_Id}"
         return result
     
     @classmethod
