@@ -4,3 +4,4 @@
 *.egg-info
 ff*.exe
 secrets.py
+setup.txt

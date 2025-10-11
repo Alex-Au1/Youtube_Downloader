@@ -88,28 +88,33 @@ class VideoCodes(Enum):
             result = {}
 
         displays = {
-            "mp4_144p": "mp4 144p",
-            "mp4_240p": "mp4 240p",
-            "mp4_360p": "mp4 360p",
-            "mp4_480p": "mp4 480p",
-            "mp4_720p": "mp4 720p",
-            "mp4_1080p": "mp4 1080p",
-            "mp4_256x144": "mp4 256x144",
-            "mp4_426x240": "mp4 426x240",
-            "mp4_640x360": "mp4 640x360",
-            "mp4_854x480": "mp4 854x480",
-            "mp4_1280x720": "mp4 1280x720",
-            "mp4_1920x1080": "mp4 1920x1080",
-            "mp4_2560x1440": "mp4 2560x1440",
-            "mp4_3840x2160": "mp4_3840x2160"
+            "mp4_144p": ("mp4 144p", ["https", "m3u8"]),
+            "mp4_240p": ("mp4 240p", ["https", "m3u8"]),
+            "mp4_360p": ("mp4 360p", ["https", "m3u8"]),
+            "mp4_480p": ("mp4 480p", ["https", "m3u8"]),
+            "mp4_720p": ("mp4 720p", ["https", "m3u8"]),
+            "mp4_1080p": ("mp4 1080p", ["https", "m3u8"]),
+            "mp4_256x144": ("mp4 256x144", ["vp9 87k m3u8", "avc1 175k m3u8", "vp9 156k m3u8"]),
+            "mp4_426x240": ("mp4 426x240", ["avc1 327k m3u8", "vp9 289k m3u8"]),
+            "mp4_640x360": ("mp4 640x360", ["avc1 812k m3u8", "vp9 567k m3u8"]),
+            "mp4_854x480": ("mp4 854x480", ["avc1 1358k m3u8", "vp9 926k m3u8"]),
+            "mp4_1280x720": ("mp4 1280x720", ["avc1 2640k m3u8", "vp9 1705k m3u8", "avc1 4842k m3u8"]),
+            "mp4_1920x1080": ("mp4 1920x1080", ["avc1 4694k m3u8", "vp9 2940k m3u8", "vp9 6443k m3u8", "avc1 7987k m3u8"]),
+            "mp4_2560x1440": ("mp4 2560x1440", ["vp9 8745k m3u8", "vp9 16287k m3u8"]),
+            "mp4_3840x2160": ("mp4_3840x2160", ["vp9 18661k m3u8", "vp9 35007k m3u8"])
         }
 
         for key in displays:
             current_enum = getattr(cls, key)
-            current_val = displays[key]
+            prefix, suffixes = displays[key]
 
-            for code in current_enum.value:
-                result[code] = current_val
+            codes = current_enum.value
+            codesLen = len(codes)
+            
+            for i in range(codesLen):
+                code = codes[i]
+                suffix = suffixes[i]
+                result[code] = f"{prefix} ({suffix})"
 
         return result
     
@@ -269,7 +274,10 @@ class DLUtils():
                 display_format[c] = code_display[c]
 
         return display_format
-
+    
+    @classmethod
+    def get_code_display(cls, code: str) -> Optional[str]:
+        return code_display.get(code)
 
     #determines when the link is a valid youtube video link
     @classmethod
