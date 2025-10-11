@@ -92,8 +92,6 @@ class YoutubeDownload():
 
     #prepare the data for downloading the video
     def prepare_download(self, video, options, folder):
-        global Download_Progress, Download_No, File_Download_Type, Finished_Download
-
         Finished_Download[self._id] = None
         Download_Progress[self._id] = "Beginning Download..."
 
@@ -187,8 +185,6 @@ class YoutubeDownload():
 
     #returns the progress of the download
     def download_hook(self, d):
-        global Download_Progress, Download_No, File_Download_Type
-
         #type of download being downloaded
         if (File_Download_Type[self._id] == "video"):
             file_type = "Video"
@@ -235,12 +231,10 @@ class YoutubeDownload():
 
     #returns the download progress to the main app
     def get_progress(self):
-        global Download_Progress
         return Download_Progress.get(self._id, "")
     
     # get_download(): Retrieves the downloaded file
     def get_download(self):
-        global Finished_Download
         result = Finished_Download.get(self._id)
         if (result is None):
             return result
@@ -257,8 +251,6 @@ class YoutubeDownload():
         ydl_opts["extractor_args"] = Extractor_Args
 
     def _download_video(self, ydl_opts: Dict[str, Any], video: Dict[str, Any], video_file_name: str):
-        global Download_Progress, Download_No, File_Download_Type, Finished_Download
-
         try:
             self.__download_video(ydl_opts, video)
 

@@ -1,9 +1,9 @@
-from django.shortcuts import render
 from .models import YoutubeDownload
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import never_cache
+from django.utils.decorators import method_decorator
 import json
-from typing import List, Any, Dict
 
 
 Downloads = {}
@@ -13,8 +13,8 @@ Downloads = {}
 class DownloaderView():
     @classmethod
     @csrf_exempt
+    @method_decorator(never_cache)
     def prepare_download(cls, request: HttpRequest) -> JsonResponse:
-        global Downloads
         post_data = json.loads(request.body.decode('utf-8'))
         video = post_data["video"]
         options = post_data["options"]
@@ -27,8 +27,8 @@ class DownloaderView():
         return JsonResponse(result)
     
     @classmethod
+    @method_decorator(never_cache)
     def get_download(cls, request: HttpRequest) -> JsonResponse:
-        global Downloads
         download_id = request.GET.get("download_id")
 
         download = Downloads.get(download_id)
@@ -40,15 +40,15 @@ class DownloaderView():
         return result
     
     @classmethod
+    @method_decorator(never_cache)
     def get_progress(cls, request: HttpRequest) -> JsonResponse:
-        global Downloads
         download_id = request.GET.get("download_id")
 
         if (download_id is None):
             return JsonResponse({"progress": "No Download Id Given"})
 
         download = Downloads.get(download_id)
-        result = download.get_progress() if (download is not None) else f"Download Id Not Registered \n RECV: {download_id}\n AND ALL DOWNLOADS: {Downloads}"
+        result = download.get_progress() if (download is not None) else f"Download Id Not Registered\nDOWNLOADS: {Downloads}\nID: {download_id}"
 
         return JsonResponse({"progress": result})
 
@@ -62,12 +62,12 @@ class DownloaderView():
         return JsonResponse(result)
     
     @classmethod
+    @method_decorator(never_cache)
     def clean_download(cls, request: HttpRequest) -> JsonResponse:
-        global Downloads
         download_id = request.GET.get("download_id")
         exists = False
 
-        download = Downloads.pop(download_id, None)
+        download = Downloads.get(download_id)
         if (download is None):
             return JsonResponse({"exists": exists})
         
@@ -78,4 +78,5 @@ class DownloaderView():
         else:
             exists = True
 
+        Downloads.pop(download_id, None)
         return JsonResponse({"exists": exists})
