@@ -4,7 +4,6 @@ import re
 from timeit import default_timer as timer
 from .format_display import FormatUtils
 from .download_video import Last_Progress_Time, Last_Progress, VideoMetadata, DLUtils, Fetch_Progress
-from .secrets import Host_Url
 from typing import Optional, Dict, Any
 
 
