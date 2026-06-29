@@ -288,3 +288,14 @@ class DLUtils():
             return True
         else:
             return False
+    
+    # cleans up the link to only include the video id without any other parameters
+    @classmethod
+    def clean_yt_link(cls, link: str):
+        queryParamSepInd = link.find("&")
+        if (queryParamSepInd != -1):
+            link = link[:queryParamSepInd]
+
+        return link
+
+

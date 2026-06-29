@@ -22,7 +22,6 @@ Download_No = {}
 Finished_Download = {}
 Sending_Download = set()
 
-BG_Utils_Generate_Paths = r"C:\Users\AlexX\Documents\Dependencies\BgUtils Pot Provider\bgutil-ytdlp-pot-provider\server\build\generate_once.js"
 Extractor_Args = {'youtubepot-bgutilhttp': {'base_url': ['http://127.0.0.1:9002']}}
 
 
@@ -346,6 +345,8 @@ class YoutubeDownload():
     @classmethod
     def add_po_token_provider(cls, ydl_opts: Dict[str, Any]):
         ydl_opts["extractor_args"] = Extractor_Args
+        ydl_opts["js_runtimes"] = {"node": {}}
+        ydl_opts["remote_components"] = ["ejs:github"]
 
     def _download_video(self, ydl_opts: Dict[str, Any], video: Dict[str, Any], video_file_name: str):
         try:
@@ -496,6 +497,77 @@ class YoutubeDownload():
             meta = ydl.extract_info(link, download=False)
 
         return meta
+    
+    @classmethod
+    def _format_short_views(cls, view_count: int) -> str:
+        if view_count >= 1_000_000_000:
+            return f"{view_count / 1_000_000_000:.1f}B views"
+        elif view_count >= 1_000_000:
+            return f"{view_count / 1_000_000:.1f}M views"
+        elif view_count >= 1_000:
+            return f"{view_count / 1_000:.1f}K views"
+        else:
+            return f"{view_count} views"
+    
+    @classmethod
+    def get_youtube_search(cls, search_query: str, no_of_searches: int):
+        opts = {
+            "quiet": True,
+            "extract_flat": True,  # don't download, just get metadata
+        }
+
+        cls.add_po_token_provider(opts)
+        with youtube_dl.YoutubeDL(opts) as ydl:
+            search_results = ydl.extract_info(f"ytsearch{no_of_searches}:{search_query}", download=False)
+
+        results = []
+        for entry in search_results.get("entries", []):
+            if entry is None:
+                continue
+
+            duration_secs = entry.get("duration") or 0
+            duration_str = f"{int(duration_secs // 60)}:{int(duration_secs % 60):02d}"
+
+            view_count = entry.get("view_count") or 0
+            view_text = f"{view_count:,} views"
+            view_short = cls._format_short_views(view_count)
+
+            video_id = entry.get("id", "")
+            thumbnail_url = entry.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hq720.jpg"
+
+            result = {
+                "type": "video",
+                "id": video_id,
+                "title": entry.get("title", ""),
+                "publishedTime": entry.get("upload_date") or "",
+                "duration": duration_str,
+                "viewCount": {
+                    "text": view_text,
+                    "short": view_short,
+                },
+                "thumbnails": [
+                    {"url": thumbnail_url, "width": 360, "height": 202}
+                ],
+                "richThumbnail": None,
+                "descriptionSnippet": [
+                    {"text": entry.get("description") or ""}
+                ],
+                "channel": {
+                    "name": entry.get("channel") or entry.get("uploader") or "",
+                    "id": entry.get("channel_id") or "",
+                    "thumbnails": [],
+                    "link": entry.get("channel_url") or "",
+                },
+                "accessibility": {
+                    "title": entry.get("title", ""),
+                    "duration": duration_str,
+                },
+                "link": entry.get("url") or f"https://www.youtube.com/watch?v={video_id}",
+                "shelfTitle": None,
+            }
+            results.append(result)
+
+        return results
 
 
     #retrieves all the available formats for download for the video
