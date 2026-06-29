@@ -1,9 +1,11 @@
-from .models import YoutubeDownload
+from .models import YoutubeDownload, Finished_Download
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import never_cache
 from django.utils.decorators import method_decorator
+from django.http import StreamingHttpResponse
 import json
+import time
 
 
 Downloads = {}
@@ -51,6 +53,33 @@ class DownloaderView():
         result = download.get_progress() if (download is not None) else f"Download Id Not Registered\nDOWNLOADS: {Downloads}\nID: {download_id}"
 
         return JsonResponse({"progress": result})
+    
+    @classmethod
+    def download_stream(cls, request: HttpRequest):
+        download_id = request.GET.get("download_id")
+        download = Downloads.get(download_id)
+
+        def event_stream():
+            if download is None:
+                yield f"data: {json.dumps({'type': 'error', 'data': 'Download not found'})}\n\n"
+                return
+
+            while True:
+                progress = download.get_progress()
+                yield f"data: {json.dumps({'type': 'progress', 'data': progress})}\n\n"
+
+                value = Finished_Download.get(download.id)
+
+                if value is not None:
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    break
+
+                time.sleep(1)
+
+        response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
 
 
     @classmethod
@@ -59,6 +88,15 @@ class DownloaderView():
         opts = request.GET.get("opts", {})
         
         result = YoutubeDownload.get_metadata(link, opts)
+        return JsonResponse(result)
+    
+    @classmethod
+    def get_youtube_search(cls, request: HttpRequest) -> JsonResponse:
+        search_query = request.GET["search_query"]
+        no_of_searches = request.GET["no_of_searches"]
+
+        result = YoutubeDownload.get_youtube_search(search_query, no_of_searches)
+        result = {"result": result}
         return JsonResponse(result)
     
     @classmethod

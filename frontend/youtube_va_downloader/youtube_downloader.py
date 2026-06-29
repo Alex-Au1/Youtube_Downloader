@@ -769,6 +769,7 @@ class Application(Frame):
                 self.download_frame.pack_forget()
 
 
+            search = DLUtils.clean_yt_link(search)
             self.download_option_sc(prev_root,search, 0, is_link=True)
 
         #displays the search frame listing the search results
@@ -1415,12 +1416,7 @@ class ProcessThread(threading.Thread):
                 try:
                     processes[self.key] = self._callable(*self._callableArgs)
                 except Exception as e:
-                    exception_lst = traceback.format_exception(type(e), e, e.__traceback__)
-                    exception_str = "".join(exception_lst)
-
-                    for e in exception_lst:
-                        exception_str += e
-
+                    exception_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
                     self._running = False
                     self._error = True
                     processes[self.key] = f"{e}\n\n{exception_str}"
@@ -1428,9 +1424,7 @@ class ProcessThread(threading.Thread):
                 try:
                     self._callable(*self._callableArgs)
                 except Exception as e:
-                    exception_lst = traceback.format_exception(type(e), e, e.__traceback__)
-                    exception_str = "".join(exception_lst)
-
+                    exception_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
                     self._running = False
                     self._error = True
                     processes[self.key] = f"{e}\n\n{exception_str}"
@@ -1455,7 +1449,7 @@ class ProcessThread(threading.Thread):
 # search_videos(search_query, no_of_searches): Searches and formats the
 #   needed data for the videos results
 def search_videos(search_query: str, no_of_searches: int):
-    results = search_youtube_video(search_query, no_of_searches)
+    results = DownloadRequests.search_youtube_video(search_query, no_of_searches)
 
     #width and height of each image icon for the search results
     img_w = 150

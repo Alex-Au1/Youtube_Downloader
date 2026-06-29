@@ -1,7 +1,7 @@
 import requests
-import time
 import re
-from timeit import default_timer as timer
+import sseclient
+import json
 from .format_display import FormatUtils
 from .download_video import Last_Progress_Time, Last_Progress, VideoMetadata, DLUtils, Fetch_Progress
 from typing import Optional, Dict, Any
@@ -22,16 +22,15 @@ class DownloadRequests():
         return result.json()
     
     @classmethod
+    def search_youtube_video(cls, search_query: str, no_of_searches: int):
+        result = requests.get(f"{Host_Url}/get_youtube_search/", params = {"search_query": search_query, "no_of_searches": no_of_searches})
+        result = result.json()
+        result = result["result"]
+        return result
+    
+    @classmethod
     def get_cached_progress(cls):
         global Last_Progress_Time, Last_Progress, Fetch_Progress
-
-        current_progress_time = timer()
-
-        if (Fetch_Progress and (Last_Progress_Time is None or current_progress_time - Last_Progress_Time > 5)):
-            Last_Progress_Time = current_progress_time
-            Last_Progress = cls.get_progress()
-            return Last_Progress
-        
         return Last_Progress
     
     @classmethod
@@ -56,34 +55,33 @@ class DownloadRequests():
         VideoMetadata = result["video"]
         Download_Id = result["download_id"]
 
-        downloadComplete = False
         file_name = ""
 
-        while (not downloadComplete):
-            fileRequest = requests.get(f"{Host_Url}/get_download/", params = {"download_id": Download_Id})
+        with requests.get(f"{Host_Url}/download_stream/", params={"download_id": Download_Id}, stream=True) as resp:
+            client = sseclient.SSEClient(resp)
+            for event in client.events():
+                msg = json.loads(event.data)
+                if msg["type"] == "progress":
+                    Last_Progress = msg["data"]
+                elif msg["type"] == "done":
+                    break
 
-            try:
-                fileRequest = fileRequest.json()
-            except:
-                Fetch_Progress = False
-                downloadComplete = True
-                Last_Progress_Time = None
-                Last_Progress = "Writing Video from Server to Disk..."
+        fileRequest = requests.get(f"{Host_Url}/get_download/", params={"download_id": Download_Id})
 
-                content_disposition = fileRequest.headers['content-disposition']
+        Fetch_Progress = False
+        Last_Progress_Time = None
+        Last_Progress = "Writing Video from Server to Disk..."
 
-                file_ext = content_disposition.rsplit(".", 1)[1]
-                file_ext_match = re.match("[A-Za-z0-9]*", file_ext)
-                if (file_ext_match):
-                    file_ext = file_ext_match.group()
+        content_disposition = fileRequest.headers['content-disposition']
 
-                video_name = video["title"]
-                video_id = video["id"]
-                file_name = FormatUtils.format_filename(f"{video_name} - {video_id}.{file_ext}")
+        file_ext = content_disposition.rsplit(".", 1)[1]
+        file_ext_match = re.match("[A-Za-z0-9]*", file_ext)
+        if (file_ext_match):
+            file_ext = file_ext_match.group()
 
-                break
-            
-            time.sleep(5)
+        video_name = video["title"]
+        video_id = video["id"]
+        file_name = FormatUtils.format_filename(f"{video_name} - {video_id}.{file_ext}")
 
         with open(file_name, 'wb') as f:
             f.write(fileRequest.content)

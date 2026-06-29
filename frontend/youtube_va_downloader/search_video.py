@@ -1,4 +1,5 @@
 from youtubesearchpython import VideosSearch
+import json
 
 
 '''
@@ -18,6 +19,7 @@ def search_youtube_video(search_query, no_of_searches):
             search.next()
         else:
             search = VideosSearch(search_query)
+            print(json.dumps(search.result()["result"][0], indent=2))
             start_search  = True
 
         search_results = search.result()["result"]
