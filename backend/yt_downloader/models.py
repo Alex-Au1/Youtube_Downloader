@@ -23,7 +23,7 @@ Finished_Download = {}
 Sending_Download = set()
 
 BG_Utils_Generate_Paths = r"C:\Users\AlexX\Documents\Dependencies\BgUtils Pot Provider\bgutil-ytdlp-pot-provider\server\build\generate_once.js"
-Extractor_Args = {'youtubepot-bgutilscript': {'script_path': [BG_Utils_Generate_Paths]}}
+Extractor_Args = {'youtubepot-bgutilhttp': {'base_url': ['http://127.0.0.1:9002']}}
 
 
 #formats for downloading the video from Youtube
