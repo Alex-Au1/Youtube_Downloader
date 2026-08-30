@@ -65,7 +65,16 @@ The remix feature is the worked example. It is asked *after* the questions and *
    - `{"type": "error", "data": "<reason>"}` if the download died, then closes.
 
    The frontend consumes this with `sseclient` and stores the latest string in the module global `Last_Progress`, which the loading screen renders. It **raises** on `error`, so the reason reaches the error dialog. Without that event the stream would never end, because it otherwise only exits when `Finished_Download` gets a value — which a dead worker thread never sets.
-3. `GET /get_download/` — returns the file. **This is one-shot:** it `pop`s the entry from `Finished_Download`, so a second call returns `{"download_available": False}`.
+
+   **The stream ending is not the same as the download finishing.** It also ends when the
+   connection is closed, which long downloads invite: IIS terminates a FastCGI request at
+   `requestTimeout`, 90 seconds by default, and neither `web.config` here raises it. The
+   client therefore treats a stream that stopped without saying `done` as a dropped
+   connection and reconnects, up to `STREAM_RECONNECT_LIMIT` times; only `done` or `error`
+   ends the wait. Reading the stream in a plain `for` loop and continuing afterwards is
+   the bug that produced `KeyError: 'content-disposition'` on large files -- the file was
+   requested before it existed, and `get_download` answers with json in that case.
+3. `GET /get_download/` — returns the file, streamed to disk in chunks so a large download never has to fit in memory. **Check `content-disposition` is present**: when the file is not ready this returns json, not a file. **This is one-shot:** it `pop`s the entry from `Finished_Download`, so a second call returns `{"download_available": False}`.
 4. Frontend writes the bytes to the CWD, then `DLUtils.move_video` relocates it to the user's chosen folder and applies tags.
 5. `GET /clean_download/` — deletes the server-side temp folder and drops the id from `Downloads`.
 
