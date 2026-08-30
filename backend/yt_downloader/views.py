@@ -89,6 +89,11 @@ class DownloaderView():
 
         response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
         response["Cache-Control"] = "no-cache"
+
+        #nginx only. IIS ignores this header entirely -- there, buffering is switched off
+        #  with responseBufferLimit="0" on the handler in web.config. Without that, IIS
+        #  holds these events until 4 MB accumulates or the request ends, so no progress
+        #  reaches the app until the download has already finished
         response["X-Accel-Buffering"] = "no"
         return response
 

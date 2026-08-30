@@ -38,6 +38,72 @@ Look for `bgutil:http-<version> (external)` in the `PO Token Providers` debug li
 
 There is also an orphaned `yt-dlp-get-pot 0.3.0` in the global environment — the deprecated pre-framework shim from the bgutil 0.7.x era. It still patches the YouTube extractor (you'll see `[youtube+GetPOT]` in tracebacks) while registering zero providers. Nothing depends on it; it is a candidate for removal.
 
+## Hosting under IIS: four settings the app depends on
+
+**IIS defaults are actively hostile to this app's design**, and three of these four live in
+`applicationHost.config` — *outside this repo*, where nothing in the code hints at them.
+If the site is ever rebuilt, or IIS reinstalled, they are silently lost and the symptoms
+below come straight back. They were verified against
+`C:\Windows\System32\inetsrv\config\schema\IIS_schema.xml` on the host.
+
+| setting | IIS default | set to | why |
+| --- | --- | --- | --- |
+| `responseBufferLimit` (web.config handler) | 4194304 | **0** | IIS holds the response until 4 MB accumulates or the request ends. `/download_stream/` emits ~60 bytes/sec, so no progress reaches the app until the download has already finished |
+| `requestTimeout` (fastCgi) | 90 | **3600** | the progress stream is one long request; at 90s IIS killed it mid-download |
+| `activityTimeout` (fastCgi) | 70 | **3600** | same reason |
+| `maxInstances` (fastCgi) | 0 = *auto* | **1** | see below — this is the important one |
+
+### Why `maxInstances=1` is not optional
+
+Every piece of download state is a module-level dict: `Downloads` in `views.py`, and
+`Download_Progress`, `File_Download_Type`, `Download_No`, `Finished_Download`,
+`Sending_Download`, `Download_Error` in `models.py`. The download itself runs in a
+background thread inside the worker process.
+
+That design requires **one long-lived process**. With `maxInstances=0` IIS auto-scales to
+several `python.exe` workers, and consecutive requests land on different ones: the POST
+registers the download in worker A, the progress stream is served by worker B, and
+`Downloads.get(id)` returns `None` — surfacing as **"Download not found"**.
+
+**The cost:** one worker means one request at a time. A long progress stream monopolises
+it, so searching or fetching metadata mid-download blocks until the download finishes.
+The durable fix is to stop holding a connection open at all — poll `/get_progress/`
+instead of streaming — which would keep the single worker free and make `requestTimeout`
+irrelevant.
+
+### Applying them
+
+`web.config` is on the deploy script's protected list, so it needs
+`py -3 main.py --include-config`. Changing it restarts the application on its own.
+
+The fastCgi settings need an **elevated** shell (`fullPath`/`arguments` must match the
+`scriptProcessor` in `web.config`):
+
+```powershell
+$fc = "$env:windir\system32\inetsrv\appcmd.exe"
+$py = "C:\Users\AlexX\AppData\Local\Programs\Python\Python313\python.exe"
+$wf = "C:\Users\AlexX\AppData\Local\Programs\Python\Python313\Lib\site-packages\wfastcgi.py"
+& $fc set config -section:system.webServer/fastCgi "/[fullPath='$py',arguments='$wf'].maxInstances:1" /commit:apphost
+& $fc set config -section:system.webServer/fastCgi "/[fullPath='$py',arguments='$wf'].requestTimeout:3600" /commit:apphost
+& $fc set config -section:system.webServer/fastCgi "/[fullPath='$py',arguments='$wf'].activityTimeout:3600" /commit:apphost
+& $fc set config -section:system.webServer/fastCgi "/[fullPath='$py',arguments='$wf'].instanceMaxRequests:1000000" /commit:apphost
+```
+
+Read the current values with
+`appcmd list config -section:system.webServer/fastCgi`. Applying them restarts the app
+pool, which **stops the site** — start it again afterwards.
+
+### Debugging notes
+
+- The `X-Accel-Buffering: no` header the view sets is an **nginx** header. IIS ignores it
+  entirely, so do not read its presence as buffering being handled.
+- Django's development server streams immediately and is single-process, so **none of
+  this reproduces locally**. A progress bar that works under `runserver` and freezes under
+  IIS is this, every time.
+- If progress is still delayed after all four, the next suspect is IIS dynamic
+  compression, which also buffers; `<urlCompression doDynamicCompression="false" />`
+  would rule it out.
+
 ## ffmpeg
 
 `ffmpeg.exe`, `ffprobe.exe` and `ffplay.exe` live in `frontend/` and are gitignored. Post-processing — audio extraction, container conversion, metadata and thumbnail embedding — fails without them.
