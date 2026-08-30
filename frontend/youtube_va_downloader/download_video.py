@@ -5,7 +5,7 @@ import mutagen
 import shutil
 from enum import Enum
 from typing import List, Dict, Optional
-import os, validators, pathlib
+import os, re, validators, pathlib
 
 
 VideoMetadata = None
@@ -28,29 +28,9 @@ class YtDownloadFormat(Enum):
     best_video_download = best_video + "/" + only_best
     worst_video_download = worst_video + "/" + only_worst
 
-    m4a = "140"
-    webm = "43"
-    mp4_144p = "160"
-    mp4_240p = "133"
-    mp4_360p = "134"
-    mp4_480p = "135"
-    mp4_720p = "136"
-    mp4_1080p = "137"
-    mp4_640x360 = "18"
-    mp4_1280x720 = "22"
-    gp3_176x144 = "17"
-    gp3_320x240 = "36"
-    flv = "5"
-
-    m4a_dup = "234"
-    mp4_144p_dup = "269"
-    mp4_240p_dup = "229"
-    mp4_360p_dup = "230"
-    mp4_480p_dup = "231"
-    mp4_720p_dup = "232"
-    mp4_1080p_dup = "270"
-    mp4_1280x720_dup = "298"
-    mp4_1280x720_dup2 = "311"
+    #the individual itags that used to live here were never referenced, and most named
+    #  formats YouTube no longer serves. Explicit format codes live in
+    #  VIDEO_FORMAT_CODES below; this enum is only the yt-dlp format *selectors*
 
 
 #file type extensions
@@ -58,110 +38,100 @@ video_filetypes = {"mp4":"mp4", "gp3":"3gp", "flv":"flv", "avi":"avi", "mkv":"mk
 audio_filetypes = {"mp3":"mp3", "wav":"wav", "aac":"aac", "ogg":"vorbis", "m4a":"m4a", "opus": "opus", "flac": "flac"}
 
 
-class VideoCodes(Enum):
-    mp4_144p = ["160", "269"]
-    mp4_240p = ["133", "229"]
-    mp4_360p = ["134", "230"]
-    mp4_480p = ["135", "231"]
-    mp4_720p = ["136", "232"]
-    mp4_1080p = ["137", "270"]
-    mp4_256x144 = ["602", "269", "603"]
-    mp4_426x240 = ["229", "604"]
-    mp4_640x360 = ["230", "605"]
-    mp4_854x480 = ["231", "606"]
-    mp4_1280x720 = ["232", "609", "311"]
-    mp4_1920x1080 = ["270", "614", "617", "312"]
-    mp4_2560x1440 = ["620", "623"]
-    mp4_3840x2160 = ["625", "628"]
+'''
+YouTube format codes (itags) offered as an explicit video download choice, each mapped
+to (label shown to the user, resulting file extension).
 
+Taken from yt-dlp's own _formats table, which is the closest thing to an authoritative
+list. Worth knowing before extending this: current yt-dlp has DELETED that table and now
+reads height/codec/ext straight out of YouTube's response rather than mapping itags.
+Doing the same here would remove the need for this list entirely, and would pick up new
+formats automatically -- see AI Agent Help/backend/CLAUDE.md.
+
+Deliberately ONE table rather than three parallel ones. The previous layout zipped codes
+against labels by position, so inserting a code silently shifted every label after it.
+
+Discontinued itags are intentionally absent: 22 (720p muxed) and 17 (3gp) were dropped by
+YouTube in 2024, and 5 (flv), 43 (VP8 webm) and 36 (3gp) before that.
+
+KEEP IN SYNC with the copy in backend/yt_downloader/models.py.
+'''
+VIDEO_FORMAT_CODES = {
+    # DASH mp4, H.264. The most widely available video-only formats
+    "160": ("mp4 144p (H.264)", "mp4"),
+    "133": ("mp4 240p (H.264)", "mp4"),
+    "134": ("mp4 360p (H.264)", "mp4"),
+    "135": ("mp4 480p (H.264)", "mp4"),
+    "136": ("mp4 720p (H.264)", "mp4"),
+    "298": ("mp4 720p60 (H.264)", "mp4"),
+    "137": ("mp4 1080p (H.264)", "mp4"),
+    "299": ("mp4 1080p60 (H.264)", "mp4"),
+    "264": ("mp4 1440p (H.264)", "mp4"),
+    "266": ("mp4 2160p (H.264)", "mp4"),
+
+    # DASH webm, VP9. Smaller than H.264 at equivalent quality, and on most videos the
+    #   only way to get 1440p or 2160p at all
+    "278": ("webm 144p (VP9)", "webm"),
+    "242": ("webm 240p (VP9)", "webm"),
+    "243": ("webm 360p (VP9)", "webm"),
+    "244": ("webm 480p (VP9)", "webm"),
+    "247": ("webm 720p (VP9)", "webm"),
+    "302": ("webm 720p60 (VP9)", "webm"),
+    "248": ("webm 1080p (VP9)", "webm"),
+    "303": ("webm 1080p60 (VP9)", "webm"),
+    "271": ("webm 1440p (VP9)", "webm"),
+    "308": ("webm 1440p60 (VP9)", "webm"),
+    "313": ("webm 2160p (VP9)", "webm"),
+    "315": ("webm 2160p60 (VP9)", "webm"),
+
+    # DASH mp4, AV1
+    "394": ("mp4 144p (AV1)", "mp4"),
+    "395": ("mp4 240p (AV1)", "mp4"),
+    "396": ("mp4 360p (AV1)", "mp4"),
+    "397": ("mp4 480p (AV1)", "mp4"),
+    "398": ("mp4 720p (AV1)", "mp4"),
+    "399": ("mp4 1080p (AV1)", "mp4"),
+    "400": ("mp4 1440p (AV1)", "mp4"),
+    "401": ("mp4 2160p (AV1)", "mp4"),
+
+    # HLS (m3u8), served for some videos instead of DASH. Not part of yt-dlp's table --
+    #   these were collected from `yt-dlp -F` output
+    "269": ("mp4 144p (H.264, HLS)", "mp4"),
+    "229": ("mp4 240p (H.264, HLS)", "mp4"),
+    "230": ("mp4 360p (H.264, HLS)", "mp4"),
+    "231": ("mp4 480p (H.264, HLS)", "mp4"),
+    "232": ("mp4 720p (H.264, HLS)", "mp4"),
+    "311": ("mp4 720p60 (H.264, HLS)", "mp4"),
+    "270": ("mp4 1080p (H.264, HLS)", "mp4"),
+    "312": ("mp4 1080p60 (H.264, HLS)", "mp4"),
+    "602": ("mp4 144p (VP9 low, HLS)", "mp4"),
+    "603": ("mp4 144p (VP9, HLS)", "mp4"),
+    "604": ("mp4 240p (VP9, HLS)", "mp4"),
+    "605": ("mp4 360p (VP9, HLS)", "mp4"),
+    "606": ("mp4 480p (VP9, HLS)", "mp4"),
+    "609": ("mp4 720p (VP9, HLS)", "mp4"),
+    "614": ("mp4 1080p (VP9, HLS)", "mp4"),
+    "617": ("mp4 1080p60 (VP9, HLS)", "mp4"),
+    "620": ("mp4 1440p (VP9, HLS)", "mp4"),
+    "623": ("mp4 1440p60 (VP9, HLS)", "mp4"),
+    "625": ("mp4 2160p (VP9, HLS)", "mp4"),
+    "628": ("mp4 2160p60 (VP9, HLS)", "mp4"),
+}
+
+
+# VideoCodes: the accessor the rest of the app imports
+class VideoCodes():
     @classmethod
     def get_all_codes(cls) -> List[str]:
-        result = []
-        for code in cls:
-            result += code.value
-
-        return result
-    
-    @classmethod
-    def get_code_displays(cls, result: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        if (result is None):
-            result = {}
-
-        displays = {
-            "mp4_144p": ("mp4 144p", ["https", "m3u8"]),
-            "mp4_240p": ("mp4 240p", ["https", "m3u8"]),
-            "mp4_360p": ("mp4 360p", ["https", "m3u8"]),
-            "mp4_480p": ("mp4 480p", ["https", "m3u8"]),
-            "mp4_720p": ("mp4 720p", ["https", "m3u8"]),
-            "mp4_1080p": ("mp4 1080p", ["https", "m3u8"]),
-            "mp4_256x144": ("mp4 256x144", ["vp9 87k m3u8", "avc1 175k m3u8", "vp9 156k m3u8"]),
-            "mp4_426x240": ("mp4 426x240", ["avc1 327k m3u8", "vp9 289k m3u8"]),
-            "mp4_640x360": ("mp4 640x360", ["avc1 812k m3u8", "vp9 567k m3u8"]),
-            "mp4_854x480": ("mp4 854x480", ["avc1 1358k m3u8", "vp9 926k m3u8"]),
-            "mp4_1280x720": ("mp4 1280x720", ["avc1 2640k m3u8", "vp9 1705k m3u8", "avc1 4842k m3u8"]),
-            "mp4_1920x1080": ("mp4 1920x1080", ["avc1 4694k m3u8", "vp9 2940k m3u8", "vp9 6443k m3u8", "avc1 7987k m3u8"]),
-            "mp4_2560x1440": ("mp4 2560x1440", ["vp9 8745k m3u8", "vp9 16287k m3u8"]),
-            "mp4_3840x2160": ("mp4_3840x2160", ["vp9 18661k m3u8", "vp9 35007k m3u8"])
-        }
-
-        for key in displays:
-            current_enum = getattr(cls, key)
-            prefix, suffixes = displays[key]
-
-            codes = current_enum.value
-            codesLen = len(codes)
-            
-            for i in range(codesLen):
-                code = codes[i]
-                suffix = suffixes[i]
-                result[code] = f"{prefix} ({suffix})"
-
-        return result
-    
-    @classmethod
-    def get_extensions(cls, result: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        if (result is None):
-            result = {}
-
-        displays = {
-            "mp4_144p": video_filetypes["mp4"],
-            "mp4_240p": video_filetypes["mp4"],
-            "mp4_360p": video_filetypes["mp4"],
-            "mp4_480p": video_filetypes["mp4"],
-            "mp4_720p": video_filetypes["mp4"],
-            "mp4_1080p": video_filetypes["mp4"],
-            "mp4_256x144": video_filetypes["mp4"],
-            "mp4_426x240": video_filetypes["mp4"],
-            "mp4_640x360": video_filetypes["mp4"],
-            "mp4_854x480": video_filetypes["mp4"],
-            "mp4_1280x720": video_filetypes["mp4"],
-            "mp4_1920x1080": video_filetypes["mp4"],
-            "mp4_2560x1440": video_filetypes["mp4"],
-            "mp4_3840x2160": video_filetypes["mp4"]
-        }
-
-        for key in displays:
-            current_enum = getattr(cls, key)
-            current_val = displays[key]
-
-            for code in current_enum.value:
-                result[code] = current_val
-
-        return result
+        return list(VIDEO_FORMAT_CODES.keys())
 
 
 
 #codes for the different download options
-code_display = {YtDownloadFormat.gp3_176x144.value:"3gp 176x144", YtDownloadFormat.gp3_320x240.value:"3gp 320x240",
-                YtDownloadFormat.flv.value:"flv"}
-
-code_display = VideoCodes.get_code_displays(result = code_display)
+code_display = {code: display for code, (display, extension) in VIDEO_FORMAT_CODES.items()}
 
 #extensions for the different download options
-extension_display = {YtDownloadFormat.gp3_176x144.value:video_filetypes["gp3"], YtDownloadFormat.gp3_320x240.value:video_filetypes["gp3"],
-                     YtDownloadFormat.flv.value:video_filetypes["flv"]}
-
-extension_display = VideoCodes.get_extensions(result = extension_display)
+extension_display = {code: extension for code, (display, extension) in VIDEO_FORMAT_CODES.items()}
 
 
 # Extensions that support embeding of thumbnails
@@ -170,6 +140,28 @@ THUMBNAIL_EMBED_FORMATS = [audio_filetypes["mp3"], video_filetypes["mkv"], audio
 
 # DLUtils: A set of tools for downloading videos
 class DLUtils():
+    # count_existing_copies(folder, basename, extension): how many copies of this
+    #   download 'folder' already holds, counting both "name.ext" and "name (n).ext".
+    #
+    #   Matching on the whole filename matters. Testing startswith("name.ext") only ever
+    #   matched the un-numbered original, so the count was 1 no matter how many copies
+    #   were really there, and every later copy was tagged as track 2
+    @classmethod
+    def count_existing_copies(cls, folder: str, basename: str, extension: str) -> int:
+        suffix = f".{extension}" if (extension) else ""
+
+        #the name comes from a video title, so it can hold regex characters
+        pattern = re.compile(rf"^{re.escape(basename)}(?: \(\d+\))?{re.escape(suffix)}$",
+                             re.IGNORECASE)
+
+        try:
+            filenames = os.listdir(folder)
+        except OSError:
+            return 0
+
+        return sum(1 for filename in filenames if pattern.match(filename))
+
+
     #move the video to the desired file location
     @classmethod
     def move_video(cls, video_file_name: str, folder: str, video):
@@ -187,19 +179,19 @@ class DLUtils():
         video_basename = video_basename_parts[0]
         video_ext = "" if (len(video_basename_parts) == 1) else video_basename_parts[1]
 
-        # get the number of existing file names in the new folder
-        existing_file_no = 0
+        #how many copies are already there, which becomes this file's track number.
+        #  Counted before the move, so it does not include the file being added
+        existing_file_no = cls.count_existing_copies(folder, video_basename, video_ext)
         copy_no = 0
 
-        #get the downloaded file
-        for filename in os.listdir(f"{folder}"):
-            if (filename.startswith(video_file_name)):
-                existing_file_no += 1
+        #rename the file if the file already exists. Each attempt is built from the
+        #  ORIGINAL name -- appending to the previous attempt instead gives names like
+        #  "file (1) (2).mp3" once more than one copy exists
+        original_basename = video_basename
 
-        #rename the file if the file already exists
         while (os.path.exists(new_path)):
             copy_no += 1
-            video_basename = f"{video_basename} ({copy_no})"
+            video_basename = f"{original_basename} ({copy_no})"
 
             new_path = os.path.join(folder, video_basename)
             if (video_ext):

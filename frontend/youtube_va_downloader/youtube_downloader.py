@@ -7,7 +7,7 @@ from PIL import ImageTk, Image
 
 from .search_video import search_youtube_video
 from .format_display import FormatUtils
-from .download_video import YtDownloadFormat, audio_filetypes, DLUtils, VideoCodes
+from .download_video import audio_filetypes, DLUtils, VideoCodes
 from .set_up import SetupFile
 from .download_requests import DownloadRequests
 
@@ -136,118 +136,496 @@ class ScrollFrame():
 
 
 
-'''
-Provides a question path using radiobuttons
+#answers whose exact text the backend matches on. prepare_download() reads the query
+#  positionally and compares these strings, so they are a wire format -- not just labels
+AUDIO_ONLY = "Audio"
+VIDEO = "Video"
+WITH_AUDIO = "Yes! Download video with audio."
+WITHOUT_AUDIO = "No! Download video without audio."
 
-A NestedRadioButton is either:
-    - NestedRadioButton
-    - None
+QUALITY_OPTIONS = {"best quality": "best quality", "worst quality": "worst quality"}
+
+
 '''
-class NestedRadioButton():
-    def __init__(self, master,question,children, video=None, page_found=None):
+One question in the download options form.
+
+'options' maps the value recorded in the query to the label shown to the user. It is
+either a dict, or the name of one of the per-video option sets ("audio"/"video") that
+are only known once the metadata has been fetched.
+
+'when' decides whether the question applies to the answers chosen so far. A question
+with no 'when' is always asked.
+'''
+class DownloadStep():
+    def __init__(self, question, options, when = None):
+        self.question = question
+        self._options = options
+        self._when = when
+
+
+    def applies_to(self, answers):
+        return (self._when is None) or self._when(answers)
+
+
+    def options(self, available):
+        if (isinstance(self._options, str)):
+            return available[self._options]
+
+        return self._options
+
+
+#the download questionnaire. Reading down the list gives every path through it:
+#  Audio          -> [Audio, quality, format]
+#  Video, audio   -> [Video, quality, WITH_AUDIO, audio quality, format]
+#  Video, silent  -> [Video, quality, WITHOUT_AUDIO, format]
+DOWNLOAD_STEPS = [
+    DownloadStep("Choose a Download Option:", {AUDIO_ONLY: AUDIO_ONLY, VIDEO: VIDEO}),
+
+    DownloadStep("Choose a download quality", QUALITY_OPTIONS),
+
+    DownloadStep("Choose a Format", "audio",
+                 when = lambda answers: answers[0] == AUDIO_ONLY),
+
+    DownloadStep("Do you want audio to be included?", {WITH_AUDIO: WITH_AUDIO, WITHOUT_AUDIO: WITHOUT_AUDIO},
+                 when = lambda answers: answers[0] == VIDEO),
+
+    DownloadStep("Choose an audio download quality", QUALITY_OPTIONS,
+                 when = lambda answers: answers[0] == VIDEO and answers[2] == WITH_AUDIO),
+
+    DownloadStep("Choose a Video Download Format", "video",
+                 when = lambda answers: answers[0] == VIDEO),
+]
+
+
+#bounds for the remix sliders. These mirror the backend's, which are fixed by ffmpeg's
+#  atempo filter only accepting 0.5-2.0 -- see AI Agent Help/backend/CLAUDE.md
+REMIX_HALF_STEPS = {"MIN": -12, "DEFAULT": 0, "MAX": 12}
+REMIX_SPEED = {"MIN": 0.5, "DEFAULT": 1.0, "MAX": 2.0}
+REMIX_SPEED_STEP = 0.05
+
+REMIX_YES = "Yes, remix it!"
+REMIX_NO = "No, download it as is."
+
+REMIX_CUSTOM = "Custom"
+
+#nightcore is a whole tone (2 half steps) up and 25% faster; its inverse is the mirror
+REMIX_PRESETS = {
+    "Nightcore": {"half_steps": 2, "speed": 1.25},
+    "Inverse Nightcore": {"half_steps": -2, "speed": 0.75},
+    REMIX_CUSTOM: None,
+}
+
+
+'''
+Half steps -> the musical interval they span, for labelling the pitch slider.
+
+A plain table rather than the arithmetic used by Haku_Bot's get_relative_interval: that
+version mislabels 9 and 11 half steps (giving "major 5th"/"major 6th" instead of major
+6th/7th), and every descending interval past -8, because it tests the signed half step
+count against the perfect 4th rather than the absolute distance. The slider only spans
+one octave either way, so all 13 cases fit in a table and cannot drift.
+'''
+MUSIC_INTERVALS = {
+    0: "Original key",
+    1: "Min 2nd",
+    2: "Maj 2nd",
+    3: "Min 3rd",
+    4: "Maj 3rd",
+    5: "Perfect 4th",
+    6: "Dim 5th",
+    7: "Perfect 5th",
+    8: "Min 6th",
+    9: "Maj 6th",
+    10: "Min 7th",
+    11: "Maj 7th",
+    12: "Octave",
+}
+
+
+# interval_name(half_steps): names the interval, e.g. "maj 3rd above", "dim 5th below"
+def interval_name(half_steps):
+    half_steps = int(half_steps)
+    name = MUSIC_INTERVALS.get(abs(half_steps))
+
+    #outside the table there is no interval name to give, so fall back to the count
+    if (name is None):
+        return f"{half_steps:+d} half steps"
+
+    if (not half_steps):
+        return name
+
+    return f"{name} {'above' if (half_steps > 0) else 'below'}"
+
+
+'''
+Asks whether the download should be remixed and, if so, by how much.
+
+Picking a preset moves the sliders; moving a slider by hand switches the preset to
+Custom. Those two updates would otherwise chase each other, so programmatic slider
+writes are guarded by 'applying_preset'.
+'''
+class RemixPanel():
+    def __init__(self, master, on_answered = None):
         self.master = master
-        self.button_frame = Frame(self.master, bg="white")
+        self.on_answered = on_answered
 
-        self.question_font = font.Font(size=10, weight="bold")
-        self.question_label = Label(self.button_frame, justify="left",font=self.question_font,bg="white")
-        self.question_label.config(text=question)
-        self.children = children
-        self.var = StringVar()
-        self.var.set(list(self.children.keys())[0])
-        self.query = []
-        self.query_pos = None
-        self.options = []
-        self.folder_frame = None
-        self.confirm_button = None
+        self.question_font = font.Font(size = 10, weight = "bold")
+        self.frame = Frame(self.master, bg = "white")
+        self.options_frame = None
+
+        #the readouts, created with the options. The slider callbacks can fire while
+        #  those widgets are still being built, so they are checked individually
+        self.interval_label = None
+        self.speed_entry = None
+        self.speed_entry_frame = None
+
+        self.wants_remix = StringVar()
+        self.wants_remix.set(REMIX_NO)
+
+        self.preset = StringVar()
+        self.preset.set(list(REMIX_PRESETS.keys())[0])
+
+        self.half_steps = IntVar()
+        self.half_steps.set(REMIX_HALF_STEPS["DEFAULT"])
+
+        self.speed = DoubleVar()
+        self.speed.set(REMIX_SPEED["DEFAULT"])
+
+        #True while a preset is writing to the sliders, so their handlers stay quiet
+        self.applying_preset = False
+
+        #a Scale's own 'command' only fires when the user moves it, NOT when its variable
+        #  is written by a preset, so the readouts hang off variable traces instead.
+        #  Added last, so setting the defaults above does not count as a user edit
+        self.half_steps.trace_add("write", lambda *args: self.half_steps_changed())
+        self.speed.trace_add("write", lambda *args: self.speed_changed())
+
+
+    #draws the yes/no question. The sliders only appear once the answer is yes
+    def render(self):
+        self.frame.pack()
+
+        Label(self.frame, justify = "left", text = "Do you want to remix your download?",
+              font = self.question_font, bg = "white").pack(ipady = "20")
+
+        for answer in (REMIX_NO, REMIX_YES):
+            Radiobutton(self.frame, text = answer, variable = self.wants_remix, value = answer,
+                        command = self.remix_toggled, bg = "white", cursor = "hand2").pack(ipady = "5")
+
+
+    #shows or hides the remix options, then lets the form move on
+    def remix_toggled(self):
+        if (self.wants_remix.get() == REMIX_YES):
+            if (self.options_frame is None):
+                self.show_options()
+
+        elif (self.options_frame is not None):
+            self.options_frame.destroy()
+            self.options_frame = None
+            self.interval_label = None
+            self.speed_entry = None
+            self.speed_entry_frame = None
+
+        if (self.on_answered is not None):
+            self.on_answered()
+
+
+    #the preset buttons and the two sliders
+    def show_options(self):
+        self.options_frame = Frame(self.frame, bg = "white")
+        self.options_frame.pack()
+
+        Label(self.options_frame, justify = "left", text = "Choose a Remix",
+              font = self.question_font, bg = "white").pack(ipady = "10")
+
+        for name in REMIX_PRESETS:
+            Radiobutton(self.options_frame, text = name, variable = self.preset, value = name,
+                        command = self.preset_selected, bg = "white", cursor = "hand2").pack(ipady = "3")
+
+        #pitch. The slider's own number is hidden in favour of the interval name
+        Label(self.options_frame, justify = "left", text = "Pitch",
+              font = self.question_font, bg = "white").pack(ipady = "10")
+
+        self.interval_label = Label(self.options_frame, justify = "left", text = "",
+                                    bg = "white")
+        self.interval_label.pack()
+
+        Scale(self.options_frame, variable = self.half_steps,
+              from_ = REMIX_HALF_STEPS["MIN"], to = REMIX_HALF_STEPS["MAX"], showvalue = 0,
+              orient = "horizontal",
+              bg = "white", highlightbackground = "white", length = 260).pack()
+
+        #tempo, with a text box for typing an exact value
+        Label(self.options_frame, justify = "left", text = "Tempo (1.0 = normal speed)",
+              font = self.question_font, bg = "white").pack(ipady = "10")
+
+        self.speed_entry_frame = Frame(self.options_frame, bg = "black", relief = "sunken")
+        self.speed_entry = Entry(self.speed_entry_frame, width = 5, justify = "center")
+        self.speed_entry.bind("<Button-1>", lambda event: self.speed_entry_frame.config(bg = "red"))
+        self.speed_entry.bind("<Return>", lambda event: self.speed_entered())
+        self.speed_entry.bind("<FocusOut>", lambda event: self.speed_entered())
+
+        self.speed_entry_frame.pack(ipady = 1, ipadx = 1)
+        self.speed_entry.pack(expand = "yes")
+
+        Scale(self.options_frame, variable = self.speed,
+              from_ = REMIX_SPEED["MIN"], to = REMIX_SPEED["MAX"], resolution = REMIX_SPEED_STEP,
+              orient = "horizontal",
+              bg = "white", highlightbackground = "white", length = 260).pack()
+
+        self.preset_selected()
+        self.refresh_pitch_label()
+        self.refresh_speed_text()
+
+
+    #moves the sliders to match the chosen preset. Custom leaves them alone
+    def preset_selected(self):
+        values = REMIX_PRESETS[self.preset.get()]
+
+        if (values is None):
+            return
+
+        self.applying_preset = True
+        self.half_steps.set(values["half_steps"])
+        self.speed.set(values["speed"])
+        self.applying_preset = False
+
+
+    #a hand-moved slider no longer matches whichever preset was selected
+    def slider_moved(self):
+        if (not self.applying_preset):
+            self.preset.set(REMIX_CUSTOM)
+
+
+    #the readouts follow the sliders whether they were moved by hand or by a preset,
+    #  so they are refreshed outside the applying_preset guard in slider_moved()
+    def half_steps_changed(self):
+        self.refresh_pitch_label()
+        self.slider_moved()
+
+
+    def speed_changed(self):
+        self.refresh_speed_text()
+        self.slider_moved()
+
+
+    #shows the pitch as a musical interval rather than a count of half steps
+    def refresh_pitch_label(self):
+        if (self.interval_label is None):
+            return
+
+        self.interval_label.config(text = interval_name(self.half_steps.get()))
+
+
+    def refresh_speed_text(self):
+        if (self.speed_entry is None):
+            return
+
+        self.speed_entry.delete(0, END)
+        self.speed_entry.insert(0, f"{self.speed.get():.2f}")
+
+
+    #accepts a tempo typed into the box. Anything unparseable or out of range falls back
+    #  to the nearest legal value rather than rejecting the edit
+    def speed_entered(self):
+        if (self.speed_entry is None):
+            return
+
+        try:
+            value = float(self.speed_entry.get())
+        except ValueError:
+            value = self.speed.get()
+
+        value = max(REMIX_SPEED["MIN"], min(REMIX_SPEED["MAX"], value))
+
+        #snap to the slider's resolution so the box and the slider cannot disagree
+        value = round(value / REMIX_SPEED_STEP) * REMIX_SPEED_STEP
+
+        self.speed.set(round(value, 2))
+        self.slider_moved()
+        self.refresh_speed_text()
+        self.speed_entry_frame.config(bg = "black")
+
+
+    # get_remix(): the payload for the backend, or None when nothing should change
+    def get_remix(self):
+        if (self.wants_remix.get() != REMIX_YES):
+            return None
+
+        half_steps = self.half_steps.get()
+        speed = self.speed.get()
+
+        if (half_steps == REMIX_HALF_STEPS["DEFAULT"] and speed == REMIX_SPEED["DEFAULT"]):
+            return None
+
+        return {"half_steps": half_steps, "speed": speed}
+
+
+    #removes the panel from the screen
+    def destroy(self):
+        self.frame.destroy()
+
+
+'''
+Asks the questions in 'steps' one at a time, revealing the next applicable question as
+each is answered, then the remix panel, a folder chooser and a download button.
+
+Answering a question again discards every answer below it, so the query always describes
+one clean path through the steps.
+'''
+class DownloadOptionsForm():
+    def __init__(self, master, steps, available_formats, video = None, page_found = None):
+        self.master = master
+        self.steps = steps
+        self.available_formats = available_formats
         self.video = video
         self.page_found = page_found
 
+        #the answers, in the order prepare_download() expects to read them
+        self.query = []
 
-    #Creates question and radio buttons for the current NestedRadioButton
-    def make_button(self):
-        self.button_frame.pack()
-        self.question_label.pack(ipady="20")
+        #one entry per question on screen: its index in 'steps', its variable and its frame
+        self.questions = []
 
-        #creates the radio buttons if they are not made yet
-        if (not self.options):
-            for c in self.children:
-                text = c
-                value = c
-
-                if (not isinstance(self.children[c], type(self))):
-                    text = self.children[c]
-
-                radio_button = Radiobutton(self.button_frame, text=text, variable=self.var, value=value, command=self.button_selected, bg="white", cursor="hand2")
-                self.options.append(radio_button)
-                radio_button.pack(ipady="5")
-
-        #pack the radio buttons if they are already made
-        else:
-            for o in self.options:
-                o.pack(ipady="10")
+        self.question_font = font.Font(size = 10, weight = "bold")
+        self.remix_panel = None
+        self.folder_frame = None
+        self.confirm_button = None
 
 
-    #Creates the child NextedRadioButton when a certain RadioButton is pressed by the user
-    def button_selected(self):
-        answer = str(self.var.get())
+    #shows the first question. The rest follow as the user answers
+    def render(self):
+        self.show_next_question()
 
-        #remembers the RadioButton options pressed by the user
-        if ((self.query_pos is None) or (self.query_pos >= len(self.query))):
-            self.query.append(answer)
-            self.query_pos = len(self.query) - 1
 
-        else:
-            self.query[self.query_pos] = answer
-            self.query = self.query[:self.query_pos + 1]
+    #the next step that applies to the answers so far, or None once the form is complete
+    def next_step(self):
+        asked = self.questions[-1]["step"] if (self.questions) else -1
 
-        selected_child = self.children[answer]
+        for i in range(asked + 1, len(self.steps)):
+            if (self.steps[i].applies_to(self.query)):
+                return i
 
-        #Hides all of the previous children of the current RadioButton that appeared on screen
-        self.unpack_children()
+        return None
 
-        #Hides the 'download' button and the 'choose folder' if the buttons have already appeared on screen
-        if (self.confirm_button is not None):
-            self.confirm_button.pack_forget()
+
+    #draws the next applicable question, or the remix panel once there are none left
+    def show_next_question(self):
+        index = self.next_step()
+
+        if (index is None):
+            self.show_remix_panel()
+            return
+
+        step = self.steps[index]
+        options = step.options(self.available_formats)
+
+        frame = Frame(self.master, bg = "white")
+        label = Label(frame, justify = "left", text = step.question, font = self.question_font, bg = "white")
+
+        var = StringVar()
+        var.set(list(options.keys())[0])
+
+        frame.pack()
+        label.pack(ipady = "20")
+
+        #the depth is fixed at creation, so a click always identifies its own question
+        depth = len(self.questions)
+
+        for value in options:
+            radio_button = Radiobutton(frame, text = options[value], variable = var, value = value,
+                                       command = lambda d = depth: self.question_answered(d),
+                                       bg = "white", cursor = "hand2")
+            radio_button.pack(ipady = "5")
+
+        self.questions.append({"step": index, "var": var, "frame": frame})
+
+
+    #records an answer and moves the form on, discarding anything answered below it
+    def question_answered(self, depth):
+        question = self.questions[depth]
+
+        self.query = self.query[:depth]
+        self.discard_below(depth)
+
+        self.query.append(str(question["var"].get()))
+        self.show_next_question()
+
+
+    #removes every question after 'depth', along with the remix panel, the folder
+    #  chooser and the download button
+    def discard_below(self, depth):
+        for q in self.questions[depth + 1:]:
+            q["frame"].destroy()
+
+        del self.questions[depth + 1:]
+
+        if (self.remix_panel is not None):
+            self.remix_panel.destroy()
+            self.remix_panel = None
 
         if (self.folder_frame is not None):
-            self.folder_frame.pack_forget()
+            self.folder_frame.destroy()
+            self.folder_frame = None
 
-        #copy the current remembered options to the selected child
-        if (isinstance(selected_child, type(self))):
-            selected_child.query = self.query
+        if (self.confirm_button is not None):
+            self.confirm_button.destroy()
+            self.confirm_button = None
 
-            selected_child.make_button()
 
-        #create the 'choose folder' button if the child is None
-        else:
-            if (self.video is None):
-                print("Missing Video in NestedRadioButton")
-            else:
-                choose_folder_font = font.Font(size=10)
-                self.folder_frame = Frame(self.button_frame, bg="white")
-                self.question_folder = Label(self.folder_frame, justify="left", text="Choose a Folder to Place the Download",font=self.question_font,bg="white")
-                self.choose_folder = Button(self.folder_frame, text="Choose Folder", command=lambda: self.get_folder() ,font=choose_folder_font, bg="#707070", fg="white",borderwidth=0, cursor="hand2")
-                self.choose_folder.bind("<Enter>", lambda event: self.choose_folder.config(bg="#505050"))
-                self.choose_folder.bind("<Leave>", lambda event: self.choose_folder.config(bg="#707070"))
-                self.selected_folder_label = Label(self.folder_frame, justify="left", text="",bg="white")
+    #asks about remixing, once every question has been answered
+    def show_remix_panel(self):
+        if (self.remix_panel is not None):
+            return
 
-                self.folder_frame.pack()
-                self.question_folder.pack(ipady="20")
-                self.choose_folder.pack(ipadx="5", ipady="3")
-                self.selected_folder_label.pack(ipady="10")
+        self.remix_panel = RemixPanel(self.master, on_answered = self.remix_answered)
+        self.remix_panel.render()
+
+
+    #the folder chooser follows the remix answer. It is only built once, so toggling
+    #  the remix on and off does not throw away an already chosen folder
+    def remix_answered(self):
+        if (self.folder_frame is None):
+            self.show_folder_chooser()
+
+
+    #asks for the folder to download into, once every question has been answered
+    def show_folder_chooser(self):
+        if (self.video is None):
+            print("Missing Video in DownloadOptionsForm")
+            return
+
+        choose_folder_font = font.Font(size = 10)
+
+        self.folder_frame = Frame(self.master, bg = "white")
+        self.question_folder = Label(self.folder_frame, justify = "left", text = "Choose a Folder to Place the Download", font = self.question_font, bg = "white")
+        self.choose_folder = Button(self.folder_frame, text = "Choose Folder", command = lambda: self.get_folder(), font = choose_folder_font, bg = "#707070", fg = "white", borderwidth = 0, cursor = "hand2")
+        self.choose_folder.bind("<Enter>", lambda event: self.choose_folder.config(bg = "#505050"))
+        self.choose_folder.bind("<Leave>", lambda event: self.choose_folder.config(bg = "#707070"))
+        self.selected_folder_label = Label(self.folder_frame, justify = "left", text = "", bg = "white")
+
+        self.folder_frame.pack()
+        self.question_folder.pack(ipady = "20")
+        self.choose_folder.pack(ipadx = "5", ipady = "3")
+        self.selected_folder_label.pack(ipady = "10")
 
 
     #opens the file explorer to choose the folder to place the download
     def get_folder(self):
         #opens the file explorer
         folder = filedialog.askdirectory()
+
+        #askdirectory returns "" when the dialog is cancelled
+        if (not folder):
+            return
+
         self.selected_folder_label.config(text=folder)
 
         confirm_button_font = font.Font(size=12)
 
         #create the 'download button' if it is not created yet
         if (self.confirm_button is None):
-            self.confirm_button = Button(self.button_frame, text="Download!", font=confirm_button_font,bg="red", fg="white", borderwidth=0, cursor="hand2")
+            self.confirm_button = Button(self.master, text="Download!", font=confirm_button_font,bg="red", fg="white", borderwidth=0, cursor="hand2")
             self.confirm_button.bind("<Enter>", lambda event: self.confirm_button.config(bg="#e60000"))
             self.confirm_button.bind("<Leave>", lambda event: self.confirm_button.config(bg="red"))
 
@@ -270,38 +648,12 @@ class NestedRadioButton():
 
         #downloads the video
         else:
-            video_download_thread._callableArgs = [self.video, self.query, folder]
             app.loading_page.text_update = True
 
-            try:
-                path = video_download_thread.start()
-            except:
-                path = video_download_thread.restart()
+            remix = self.remix_panel.get_remix() if (self.remix_panel is not None) else None
+            video_download_thread.dispatch(self.video, self.query, folder, remix)
 
             app.loading_page.check_running_thread(video_download_thread, app.download_finish_sc, [root, app.loading_page, self.page_found], "download", DownloadRequests.get_cached_progress)
-
-
-    #hides all the children of the current NestedRadioButton that are displayed on the screen
-    def unpack_children(self):
-        for c in self.children:
-            if (isinstance(self.children[c], type(self))):
-                self.children[c].forget_options()
-                self.children[c].unpack_children()
-
-
-    #Hides the current NestedRadioButton
-    def forget_options(self):
-        self.button_frame.pack_forget()
-        self.question_label.pack_forget()
-
-        for o in self.options:
-            o.pack_forget()
-
-        if (self.confirm_button is not None):
-            self.confirm_button.pack_forget()
-
-        if (self.folder_frame is not None):
-            self.folder_frame.pack_forget()
 
 
 # EntrySlider: Slider with a text box entry
@@ -455,8 +807,10 @@ class LoadingPage:
         else:
             #display the error message if the thread encountered an error
             if (thread_class._error):
-                thread_class._error = True
-                confirm_error = messagebox.showerror("An Error Has Occured", f"An error has unexpectedly occured during the proccess with the message:\n\n{processes[key]}\n\n- check if your internet is connected\n- restart the program")
+                thread_class._error = False
+                thread_class.join()
+                error_msg = processes.get(key, "Unknown error")
+                confirm_error = messagebox.showerror("An Error Has Occured", f"An error has unexpectedly occured during the proccess with the message:\n\n{error_msg}\n\n- check if your internet is connected\n- restart the program")
 
                 if (confirm_error == "ok"):
                     app.return_home(self, [displayed_search_pages, download_pages_lsts])
@@ -780,12 +1134,7 @@ class Application(Frame):
             self.loading_page = LoadingPage(self.master, "loading...")
             self.loading_page.pack_page()
 
-            search_video_thread._callableArgs = [search, int(setting_data["results/search"])]
-            search_video_thread._running = True
-            try:
-                results = search_video_thread.start()
-            except:
-                results = search_video_thread.restart()
+            search_video_thread.dispatch(search, int(setting_data["results/search"]))
 
 
             if (current_sc == "home"):
@@ -912,15 +1261,10 @@ class Application(Frame):
 
                 video_att = {"key":key, "link":link, "time":time, "date posted":date_posted, "title":title, "uploader":uploader}
 
-                meta_data_thread._callableArgs = [link]
-
                 self.loading_page = LoadingPage(self.master, "loading...")
                 self.loading_page.pack_page()
 
-                try:
-                    meta = meta_data_thread.start()
-                except:
-                    meta = meta_data_thread.restart()
+                meta_data_thread.dispatch(link)
 
                 self.loading_page.check_running_thread(meta_data_thread, self.choose_download, [video, video_att, page_found, is_link, prev_root], "meta")
 
@@ -932,12 +1276,7 @@ class Application(Frame):
                 self.loading_page.pack_page()
                 video_att = {"key":key, "link":link}
 
-                meta_data_thread._callableArgs = [link]
-
-                try:
-                    meta = meta_data_thread.start()
-                except:
-                    meta = meta_data_thread.restart()
+                meta_data_thread.dispatch(link)
 
                 self.loading_page.check_running_thread(meta_data_thread, self.choose_download, [video, video_att, page_found, is_link, prev_root], "meta")
 
@@ -1104,23 +1443,11 @@ class Application(Frame):
         download_format_frame = Frame(dl_master)
         download_question_label = Label(download_format_frame, justify="left", bg="light blue")
 
-        download_questions = NestedRadioButton(dl_master,"Choose a Download Option:",
-            {"Audio":NestedRadioButton(dl_master,"Choose a download quality",
-                {"best quality": NestedRadioButton(dl_master,"Choose a Format",available_audio_formats, video, page_found),
-                 "worst quality": NestedRadioButton(dl_master,"Choose a Format",available_audio_formats, video, page_found)}),
-             "Video":NestedRadioButton(dl_master,"Choose a download quality",
-                {"best quality": NestedRadioButton(dl_master,"Do you want audio to be included?",
-                    {"Yes! Download video with audio.":NestedRadioButton(dl_master,"Choose an audio download quality",
-                        {"best quality": NestedRadioButton(dl_master,"Choose a Video Download Format",available_video_formats, video, page_found),
-                            "worst quality": NestedRadioButton(dl_master,"Choose a Video Download Format",available_video_formats, video, page_found)}),
-                     "No! Download video without audio.":NestedRadioButton(dl_master,"Choose a Video Download Format",available_video_formats, video, page_found)}),
-                         "worst quality": NestedRadioButton(dl_master,"Do you want audio to be included?",
-                    {"Yes! Download video with audio.":NestedRadioButton(dl_master,"Choose an audio download quality",
-                        {"best quality": NestedRadioButton(dl_master,"Choose a Video Download Format",available_video_formats, video, page_found),
-                         "worst quality": NestedRadioButton(dl_master,"Choose a Video Download Format",available_video_formats, video, page_found)}),
-                     "No! Download video without audio.":NestedRadioButton(dl_master,"Choose a Video Download Format",available_video_formats, video, page_found)})})})
+        download_questions = DownloadOptionsForm(dl_master, DOWNLOAD_STEPS,
+            {"audio": available_audio_formats, "video": available_video_formats},
+            video, page_found)
 
-        download_questions.make_button()
+        download_questions.render()
 
 
     #copy video link to the clipboard in the download frame
@@ -1389,8 +1716,28 @@ class ProcessThread(threading.Thread):
         self.return_value = return_value
         self._running = False
         self._error = False
+        self._startedOnce = False
 
         threading.Thread.__init__(self)
+
+
+    #arms and runs the worker. Must be called from the GUI thread, and does all the
+    #  bookkeeping *before* the worker can run so check_running_thread never observes
+    #  a not-yet-started thread as a finished one
+    def dispatch(self, *args):
+        if (args):
+            self._callableArgs = list(args)
+
+        self._error = False
+        processes.pop(self.key, None)
+        self._oneRunFinished.clear()
+        self._running = True
+
+        if (not self._startedOnce):
+            self._startedOnce = True
+            self.start()
+
+        self._startSignal.set()
 
 
     def restart(self):
@@ -1399,7 +1746,6 @@ class ProcessThread(threading.Thread):
 
 
     def run(self):
-        self.restart()
         while(True):
             # wait until we should process
             self._startSignal.wait()
@@ -1410,28 +1756,21 @@ class ProcessThread(threading.Thread):
                 self._oneRunFinished.set()
                 return
 
-            self._running = True
             # call the threaded function
-            if (self.return_value):
-                try:
-                    processes[self.key] = self._callable(*self._callableArgs)
-                except Exception as e:
-                    exception_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-                    self._running = False
-                    self._error = True
-                    processes[self.key] = f"{e}\n\n{exception_str}"
-            else:
-                try:
-                    self._callable(*self._callableArgs)
-                except Exception as e:
-                    exception_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-                    self._running = False
-                    self._error = True
-                    processes[self.key] = f"{e}\n\n{exception_str}"
+            try:
+                result = self._callable(*self._callableArgs)
+                if (self.return_value):
+                    processes[self.key] = result
+            except Exception as e:
+                exception_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+                self._error = True
+                processes[self.key] = f"{e}\n\n{exception_str}"
 
-            # notify about the run's end
-            self._running = False
+            # notify about the run's end. The event must be set *before* clearing
+            #   _running, since check_running_thread treats "not _running" as its cue
+            #   to join(), and join() waits on this event
             self._oneRunFinished.set()
+            self._running = False
 
 
     def join(self):
@@ -1519,7 +1858,7 @@ if (__name__ != "__main__"):
 
     #threads to search, download, or get meta data from videos
     search_wrap_thread = threading.Thread(target=word_wrap.wrap_search_text, args=[])
-    video_download_thread = ProcessThread(target=DownloadRequests.prepare_download, args=[None, None, None], key="download", return_value=True)
+    video_download_thread = ProcessThread(target=DownloadRequests.prepare_download, args=[None, None, None, None], key="download", return_value=True)
     search_video_thread = ProcessThread(target=search_videos, args=[None, None], key="search", return_value=True)
     meta_data_thread = ProcessThread(target=DownloadRequests.get_metadata, args=[None], key="meta", return_value=True)
     video_download_thread.daemon = True

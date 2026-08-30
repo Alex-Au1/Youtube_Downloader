@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 import yt_dlp as youtube_dl
+from yt_dlp.postprocessor import EmbedThumbnailPP
 import os, validators
 from django.http import FileResponse
 from threading import Thread
@@ -7,7 +8,9 @@ import uuid
 import shutil
 import os
 import errno
+import json
 import stat
+import subprocess
 from enum import Enum
 from typing import Dict, Any, Optional, List
 
@@ -22,7 +25,278 @@ Download_No = {}
 Finished_Download = {}
 Sending_Download = set()
 
+#downloads that died on their worker thread, keyed by download id. download_stream
+#  watches this so a failed download ends the stream instead of streaming forever
+Download_Error = {}
+
 Extractor_Args = {'youtubepot-bgutilhttp': {'base_url': ['http://127.0.0.1:9002']}}
+
+
+#bounds for the remix (pitch/tempo) edits.
+#
+#   These are NOT arbitrary. ffmpeg's atempo filter only accepts 0.5-2.0 per instance,
+#   and the pitch correction below is 1/pitch. At -/+12 half steps pitch is 0.5/2.0, so
+#   1/pitch lands exactly on atempo's limits. Widening either range means emitting
+#   several chained atempo filters instead of one.
+HALF_STEPS_PER_OCTAVE = 12
+HALF_STEPS = {"MIN": -12.0, "DEFAULT": 0.0, "MAX": 12.0}
+SPEED = {"MIN": 0.5, "DEFAULT": 1.0, "MAX": 2.0}
+DEFAULT_SAMPLE_RATE = 44100
+
+
+#keeps 'value' inside the MIN/MAX of 'bounds'
+def clamp(value: float, bounds: Dict[str, float]) -> float:
+    return max(bounds["MIN"], min(bounds["MAX"], value))
+
+
+'''
+Pitch and tempo edits to apply to a finished download.
+
+The filter chain follows the jukebox in Haku_Bot's search/music.py:
+
+    asetrate = rate * pitch     shifts pitch AND speed together by 'pitch'
+    atempo   = 1 / pitch        cancels that speed change, leaving a pure pitch shift
+    atempo   = speed            then applies the tempo the user actually asked for
+
+where pitch = 2 ** (half_steps / 12), i.e. equal temperament.
+'''
+class RemixOptions():
+    def __init__(self, half_steps: float = HALF_STEPS["DEFAULT"], speed: float = SPEED["DEFAULT"]):
+        self.half_steps = clamp(half_steps, HALF_STEPS)
+        self.speed = clamp(speed, SPEED)
+
+
+    #builds the options from the raw json sent by the frontend, or None when there is
+    #  nothing to do. Bad input degrades to "no remix" rather than failing the download
+    @classmethod
+    def from_request(cls, raw: Optional[Dict[str, Any]]) -> Optional["RemixOptions"]:
+        if (not raw):
+            return None
+
+        try:
+            result = cls(float(raw.get("half_steps", HALF_STEPS["DEFAULT"])),
+                         float(raw.get("speed", SPEED["DEFAULT"])))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        return None if (result.is_noop()) else result
+
+
+    #whether the options would leave the file unchanged
+    def is_noop(self) -> bool:
+        return (self.half_steps == HALF_STEPS["DEFAULT"] and self.speed == SPEED["DEFAULT"])
+
+
+    #whether the tempo differs from normal, which is what forces a video re-encode
+    def changes_tempo(self) -> bool:
+        return self.speed != SPEED["DEFAULT"]
+
+
+    # get_pitch(): the frequency multiplier for the chosen number of half steps
+    def get_pitch(self) -> float:
+        return (2 ** (self.half_steps / HALF_STEPS_PER_OCTAVE))
+
+
+    # get_pitch_speed(): the tempo needed to undo the speed change asetrate caused
+    def get_pitch_speed(self) -> float:
+        return (1 / self.get_pitch())
+
+
+    # audio_filter(sample_rate): the -filter:a chain
+    def audio_filter(self, sample_rate: int = DEFAULT_SAMPLE_RATE) -> str:
+        #the trailing aresample is not in the Haku_Bot version, which streams to discord
+        #  and lets it resample. Writing to a file, it keeps the output's declared rate
+        #  equal to the input's instead of the asetrate-inflated one
+        return (f"asetrate={sample_rate}*{self.get_pitch():.6f},"
+                f"atempo={self.get_pitch_speed():.6f},"
+                f"atempo={self.speed:.6f},"
+                f"aresample={sample_rate}")
+
+
+    # video_filter(): the -filter:v chain, needed only when the tempo changes
+    def video_filter(self) -> str:
+        return f"setpts={(1 / self.speed):.6f}*PTS"
+
+
+'''
+Runs a RemixOptions over a finished download with a single ffmpeg pass.
+
+ffmpeg cannot edit in place, so this writes a sibling temp file and swaps it in. The
+returned path is the file to hand back to the frontend -- on any failure that is the
+untouched original, since a plain download is better than a dead one.
+'''
+class Remixer():
+    #reads stream info out of 'path', or None when ffprobe is unavailable or unhappy
+    @classmethod
+    def probe(cls, path: str) -> Optional[Dict[str, Any]]:
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "stream=index,codec_type,codec_name,sample_rate:stream_disposition=attached_pic",
+                 "-of", "json", path],
+                capture_output = True, timeout = 60)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        if (probe.returncode):
+            return None
+
+        try:
+            return json.loads(probe.stdout.decode("utf-8", errors = "replace"))
+        except ValueError:
+            return None
+
+
+    # sample_rate(streams): the first audio stream's rate, falling back to the default
+    @classmethod
+    def sample_rate(cls, streams: List[Dict[str, Any]]) -> int:
+        for stream in streams:
+            if (stream.get("codec_type") == "audio" and stream.get("sample_rate")):
+                try:
+                    return int(stream["sample_rate"])
+                except ValueError:
+                    break
+
+        return DEFAULT_SAMPLE_RATE
+
+
+    # has_moving_video(streams): whether there is real video, as opposed to the still
+    #   cover art that gets embedded into mp3/m4a downloads
+    @classmethod
+    def has_moving_video(cls, streams: List[Dict[str, Any]]) -> bool:
+        for stream in streams:
+            if (stream.get("codec_type") != "video"):
+                continue
+
+            if (not stream.get("disposition", {}).get("attached_pic")):
+                return True
+
+        return False
+
+
+    # cover_stream(streams): the embedded cover art stream, if the file carries one
+    @classmethod
+    def cover_stream(cls, streams: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        for stream in streams:
+            if (stream.get("codec_type") == "video" and stream.get("disposition", {}).get("attached_pic")):
+                return stream
+
+        return None
+
+
+    # extract_cover(path, stream): writes the embedded cover out to its own file,
+    #   returning that path, or None if it could not be pulled out
+    @classmethod
+    def extract_cover(cls, path: str, stream: Dict[str, Any]) -> Optional[str]:
+        extension = "png" if (stream.get("codec_name") == "png") else "jpg"
+        cover_path = f"{os.path.splitext(path)[0]}.cover.{extension}"
+
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-i", path,
+                 "-map", "0:v:0", "-frames:v", "1", "-c", "copy", cover_path],
+                capture_output = True, timeout = 60)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        if (result.returncode or not os.path.exists(cover_path)):
+            return None
+
+        return cover_path
+
+
+    # embed_cover(path, cover_path): puts the cover back afterwards, reusing yt-dlp's own
+    #   postprocessor so every container is handled exactly as it was originally
+    @classmethod
+    def embed_cover(cls, path: str, cover_path: str):
+        info = {"filepath": path,
+                "ext": os.path.splitext(path)[1].lstrip("."),
+                "thumbnails": [{"filepath": cover_path, "url": ""}]}
+
+        try:
+            with youtube_dl.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+                EmbedThumbnailPP(ydl, already_have_thumbnail = True).run(info)
+
+        #a missing cover is not worth failing an otherwise finished download over
+        except Exception:
+            pass
+
+
+    # apply(path, remix): remixes the file at 'path', returning the path to use
+    @classmethod
+    def apply(cls, path: str, remix: Optional[RemixOptions]) -> str:
+        if (remix is None or remix.is_noop()):
+            return path
+
+        probed = cls.probe(path)
+        if (probed is None):
+            return path
+
+        streams = probed.get("streams", [])
+        base, ext = os.path.splitext(path)
+        remixed_path = f"{base}.remixed{ext}"
+
+        moving_video = cls.has_moving_video(streams)
+
+        #ffmpeg can read cover art out of containers it cannot write it back into -- opus
+        #  is the notable one, where the cover lives as a METADATA_BLOCK_PICTURE comment
+        #  and the muxer has no video support at all. So the cover is pulled out, left out
+        #  of the remix, and re-embedded afterwards
+        cover = None if (moving_video) else cls.cover_stream(streams)
+        cover_path = cls.extract_cover(path, cover) if (cover is not None) else None
+
+        args = ["ffmpeg", "-y", "-v", "error", "-i", path]
+
+        if (moving_video):
+            #setpts needs a re-encode; without a tempo change the video can be copied
+            if (remix.changes_tempo()):
+                args += ["-filter:v", remix.video_filter()]
+            else:
+                args += ["-c:v", "copy"]
+        else:
+            #drop any cover art here; embed_cover puts it back below
+            args += ["-vn"]
+
+        #metadata carries over on its own: ffmpeg maps input 0's tags by default, and for
+        #  ogg/opus the vorbis comments ride along on the audio stream
+        args += ["-filter:a", remix.audio_filter(cls.sample_rate(streams)), remixed_path]
+
+        try:
+            result = subprocess.run(args, capture_output = True, timeout = 60 * 60)
+        except (OSError, subprocess.SubprocessError):
+            return path
+
+        if (result.returncode or not os.path.exists(remixed_path)):
+            cls.discard(remixed_path)
+            cls.discard(cover_path)
+
+            return path
+
+        #swap the remix in under the original name so the download keeps its filename
+        final_path = remixed_path
+        try:
+            os.replace(remixed_path, path)
+            final_path = path
+        except OSError:
+            pass
+
+        if (cover_path is not None):
+            cls.embed_cover(final_path, cover_path)
+            cls.discard(cover_path)
+
+        return final_path
+
+
+    #removes a working file, if there is one and it still exists
+    @classmethod
+    def discard(cls, path: Optional[str]):
+        if (path is None):
+            return
+
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 #formats for downloading the video from Youtube
@@ -39,29 +313,9 @@ class YtDownloadFormat(Enum):
     best_video_download = best_video + "/" + only_best
     worst_video_download = worst_video + "/" + only_worst
 
-    m4a = "140"
-    webm = "43"
-    mp4_144p = "160"
-    mp4_240p = "133"
-    mp4_360p = "134"
-    mp4_480p = "135"
-    mp4_720p = "136"
-    mp4_1080p = "137"
-    mp4_640x360 = "18"
-    mp4_1280x720 = "22"
-    gp3_176x144 = "17"
-    gp3_320x240 = "36"
-    flv = "5"
-
-    m4a_dup = "234"
-    mp4_144p_dup = "269"
-    mp4_240p_dup = "229"
-    mp4_360p_dup = "230"
-    mp4_480p_dup = "231"
-    mp4_720p_dup = "232"
-    mp4_1080p_dup = "270"
-    mp4_1280x720_dup = "298"
-    mp4_1280x720_dup2 = "311"
+    #the individual itags that used to live here were never referenced, and most named
+    #  formats YouTube no longer serves. Explicit format codes live in
+    #  VIDEO_FORMAT_CODES below; this enum is only the yt-dlp format *selectors*
 
 
 #file type extensions
@@ -69,114 +323,113 @@ video_filetypes = {"mp4":"mp4", "gp3":"3gp", "flv":"flv", "avi":"avi", "mkv":"mk
 audio_filetypes = {"mp3":"mp3", "wav":"wav", "aac":"aac", "ogg":"vorbis", "m4a":"m4a", "opus": "opus", "flac": "flac"}
 
 
-class VideoCodes(Enum):
-    mp4_144p = ["160", "269"]
-    mp4_240p = ["133", "229"]
-    mp4_360p = ["134", "230"]
-    mp4_480p = ["135", "231"]
-    mp4_720p = ["136", "232"]
-    mp4_1080p = ["137", "270"]
-    mp4_256x144 = ["602", "269", "603"]
-    mp4_426x240 = ["229", "604"]
-    mp4_640x360 = ["230", "605"]
-    mp4_854x480 = ["231", "606"]
-    mp4_1280x720 = ["232", "609", "311"]
-    mp4_1920x1080 = ["270", "614", "617", "312"]
-    mp4_2560x1440 = ["620", "623"]
-    mp4_3840x2160 = ["625", "628"]
+'''
+YouTube format codes (itags) offered as an explicit video download choice, each mapped
+to (label shown to the user, resulting file extension).
 
+Taken from yt-dlp's own _formats table, which is the closest thing to an authoritative
+list. Worth knowing before extending this: current yt-dlp has DELETED that table and now
+reads height/codec/ext straight out of YouTube's response rather than mapping itags.
+Doing the same here would remove the need for this list entirely, and would pick up new
+formats automatically -- see AI Agent Help/backend/CLAUDE.md.
+
+Deliberately ONE table rather than three parallel ones. The previous layout zipped codes
+against labels by position, so inserting a code silently shifted every label after it.
+
+Discontinued itags are intentionally absent: 22 (720p muxed) and 17 (3gp) were dropped by
+YouTube in 2024, and 5 (flv), 43 (VP8 webm) and 36 (3gp) before that.
+'''
+VIDEO_FORMAT_CODES = {
+    # DASH mp4, H.264. The most widely available video-only formats
+    "160": ("mp4 144p (H.264)", "mp4"),
+    "133": ("mp4 240p (H.264)", "mp4"),
+    "134": ("mp4 360p (H.264)", "mp4"),
+    "135": ("mp4 480p (H.264)", "mp4"),
+    "136": ("mp4 720p (H.264)", "mp4"),
+    "298": ("mp4 720p60 (H.264)", "mp4"),
+    "137": ("mp4 1080p (H.264)", "mp4"),
+    "299": ("mp4 1080p60 (H.264)", "mp4"),
+    "264": ("mp4 1440p (H.264)", "mp4"),
+    "266": ("mp4 2160p (H.264)", "mp4"),
+
+    # DASH webm, VP9. Smaller than H.264 at equivalent quality, and on most videos the
+    #   only way to get 1440p or 2160p at all
+    "278": ("webm 144p (VP9)", "webm"),
+    "242": ("webm 240p (VP9)", "webm"),
+    "243": ("webm 360p (VP9)", "webm"),
+    "244": ("webm 480p (VP9)", "webm"),
+    "247": ("webm 720p (VP9)", "webm"),
+    "302": ("webm 720p60 (VP9)", "webm"),
+    "248": ("webm 1080p (VP9)", "webm"),
+    "303": ("webm 1080p60 (VP9)", "webm"),
+    "271": ("webm 1440p (VP9)", "webm"),
+    "308": ("webm 1440p60 (VP9)", "webm"),
+    "313": ("webm 2160p (VP9)", "webm"),
+    "315": ("webm 2160p60 (VP9)", "webm"),
+
+    # DASH mp4, AV1
+    "394": ("mp4 144p (AV1)", "mp4"),
+    "395": ("mp4 240p (AV1)", "mp4"),
+    "396": ("mp4 360p (AV1)", "mp4"),
+    "397": ("mp4 480p (AV1)", "mp4"),
+    "398": ("mp4 720p (AV1)", "mp4"),
+    "399": ("mp4 1080p (AV1)", "mp4"),
+    "400": ("mp4 1440p (AV1)", "mp4"),
+    "401": ("mp4 2160p (AV1)", "mp4"),
+
+    # HLS (m3u8), served for some videos instead of DASH. Not part of yt-dlp's table --
+    #   these were collected from `yt-dlp -F` output
+    "269": ("mp4 144p (H.264, HLS)", "mp4"),
+    "229": ("mp4 240p (H.264, HLS)", "mp4"),
+    "230": ("mp4 360p (H.264, HLS)", "mp4"),
+    "231": ("mp4 480p (H.264, HLS)", "mp4"),
+    "232": ("mp4 720p (H.264, HLS)", "mp4"),
+    "311": ("mp4 720p60 (H.264, HLS)", "mp4"),
+    "270": ("mp4 1080p (H.264, HLS)", "mp4"),
+    "312": ("mp4 1080p60 (H.264, HLS)", "mp4"),
+    "602": ("mp4 144p (VP9 low, HLS)", "mp4"),
+    "603": ("mp4 144p (VP9, HLS)", "mp4"),
+    "604": ("mp4 240p (VP9, HLS)", "mp4"),
+    "605": ("mp4 360p (VP9, HLS)", "mp4"),
+    "606": ("mp4 480p (VP9, HLS)", "mp4"),
+    "609": ("mp4 720p (VP9, HLS)", "mp4"),
+    "614": ("mp4 1080p (VP9, HLS)", "mp4"),
+    "617": ("mp4 1080p60 (VP9, HLS)", "mp4"),
+    "620": ("mp4 1440p (VP9, HLS)", "mp4"),
+    "623": ("mp4 1440p60 (VP9, HLS)", "mp4"),
+    "625": ("mp4 2160p (VP9, HLS)", "mp4"),
+    "628": ("mp4 2160p60 (VP9, HLS)", "mp4"),
+}
+
+
+# VideoCodes: the accessor the rest of the app imports
+class VideoCodes():
     @classmethod
     def get_all_codes(cls) -> List[str]:
-        result = []
-        for code in cls:
-            result += code.value
-
-        return result
-    
-    @classmethod
-    def get_code_displays(cls, result: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        if (result is None):
-            result = {}
-
-        displays = {
-            "mp4_144p": ("mp4 144p", ["https", "m3u8"]),
-            "mp4_240p": ("mp4 240p", ["https", "m3u8"]),
-            "mp4_360p": ("mp4 360p", ["https", "m3u8"]),
-            "mp4_480p": ("mp4 480p", ["https", "m3u8"]),
-            "mp4_720p": ("mp4 720p", ["https", "m3u8"]),
-            "mp4_1080p": ("mp4 1080p", ["https", "m3u8"]),
-            "mp4_256x144": ("mp4 256x144", ["vp9 87k m3u8", "avc1 175k m3u8", "vp9 156k m3u8"]),
-            "mp4_426x240": ("mp4 426x240", ["avc1 327k m3u8", "vp9 289k m3u8"]),
-            "mp4_640x360": ("mp4 640x360", ["avc1 812k m3u8", "vp9 567k m3u8"]),
-            "mp4_854x480": ("mp4 854x480", ["avc1 1358k m3u8", "vp9 926k m3u8"]),
-            "mp4_1280x720": ("mp4 1280x720", ["avc1 2640k m3u8", "vp9 1705k m3u8", "avc1 4842k m3u8"]),
-            "mp4_1920x1080": ("mp4 1920x1080", ["avc1 4694k m3u8", "vp9 2940k m3u8", "vp9 6443k m3u8", "avc1 7987k m3u8"]),
-            "mp4_2560x1440": ("mp4 2560x1440", ["vp9 8745k m3u8", "vp9 16287k m3u8"]),
-            "mp4_3840x2160": ("mp4_3840x2160", ["vp9 18661k m3u8", "vp9 35007k m3u8"])
-        }
-
-        for key in displays:
-            current_enum = getattr(cls, key)
-            prefix, suffixes = displays[key]
-
-            codes = current_enum.value
-            codesLen = len(codes)
-            
-            for i in range(codesLen):
-                code = codes[i]
-                suffix = suffixes[i]
-                result[code] = f"{prefix} ({suffix})"
-
-        return result
-    
-    @classmethod
-    def get_extensions(cls, result: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        if (result is None):
-            result = {}
-
-        displays = {
-            "mp4_144p": video_filetypes["mp4"],
-            "mp4_240p": video_filetypes["mp4"],
-            "mp4_360p": video_filetypes["mp4"],
-            "mp4_480p": video_filetypes["mp4"],
-            "mp4_720p": video_filetypes["mp4"],
-            "mp4_1080p": video_filetypes["mp4"],
-            "mp4_256x144": video_filetypes["mp4"],
-            "mp4_426x240": video_filetypes["mp4"],
-            "mp4_640x360": video_filetypes["mp4"],
-            "mp4_854x480": video_filetypes["mp4"],
-            "mp4_1280x720": video_filetypes["mp4"],
-            "mp4_1920x1080": video_filetypes["mp4"],
-            "mp4_2560x1440": video_filetypes["mp4"],
-            "mp4_3840x2160": video_filetypes["mp4"]
-        }
-
-        for key in displays:
-            current_enum = getattr(cls, key)
-            current_val = displays[key]
-
-            for code in current_enum.value:
-                result[code] = current_val
-
-        return result
+        return list(VIDEO_FORMAT_CODES.keys())
 
 
 
 #codes for the different download options
-code_display = {YtDownloadFormat.gp3_176x144.value:"3gp 176x144", YtDownloadFormat.gp3_320x240.value:"3gp 320x240",
-                YtDownloadFormat.flv.value:"flv"}
-
-code_display = VideoCodes.get_code_displays(result = code_display)
+code_display = {code: display for code, (display, extension) in VIDEO_FORMAT_CODES.items()}
 
 #extensions for the different download options
-extension_display = {YtDownloadFormat.gp3_176x144.value:video_filetypes["gp3"], YtDownloadFormat.gp3_320x240.value:video_filetypes["gp3"],
-                     YtDownloadFormat.flv.value:video_filetypes["flv"]}
-
-extension_display = VideoCodes.get_extensions(result = extension_display)
+extension_display = {code: extension for code, (display, extension) in VIDEO_FORMAT_CODES.items()}
 
 
-# Extensions that support embeding of thumbnails
-THUMBNAIL_EMBED_FORMATS = [audio_filetypes["mp3"], video_filetypes["mkv"], audio_filetypes["ogg"], audio_filetypes["m4a"], video_filetypes["mp4"]]
+# Extensions that support embeding of thumbnails.
+#
+#   This must stay in sync with yt-dlp's EmbedThumbnailPP, which handles
+#   mp3 / mkv / mka / m4a / mp4 / m4v / mov / ogg / opus / flac. A format missing from
+#   here never gets 'writethumbnail' set, so no thumbnail is ever downloaded and
+#   EmbedThumbnail then has nothing to embed -- the cover silently comes out empty.
+#
+#   'vorbis' is what this app calls an ogg download internally (audio_filetypes maps
+#   ogg -> the ffmpeg codec name), so both spellings are listed.
+THUMBNAIL_EMBED_FORMATS = [audio_filetypes["mp3"], audio_filetypes["m4a"], audio_filetypes["ogg"],
+                           audio_filetypes["opus"], audio_filetypes["flac"],
+                           video_filetypes["mkv"], video_filetypes["mp4"],
+                           "ogg", "mka", "m4v", "mov"]
 
 
 # YoutubeDownload: Class to deal with downloading Youtube videos
@@ -184,15 +437,22 @@ class YoutubeDownload():
     def __init__(self):
         self._id = str(uuid.uuid4().hex)
         self._folder: Optional[str] = None
+        self._remix: Optional[RemixOptions] = None
 
     @property
     def id(self):
         return self._id
 
     #prepare the data for downloading the video
-    def prepare_download(self, video, options, folder):
+    def prepare_download(self, video, options, folder, remix = None):
         Finished_Download[self._id] = None
         Download_Progress[self._id] = "Beginning Download..."
+
+        Download_Error.pop(self._id, None)
+
+        #the remix travels as its own field rather than inside 'options', which is a
+        #  positional format the branches below index by hand
+        self._remix = RemixOptions.from_request(remix)
 
         #if the user is only downloading  audio
         if (options[0] == "Audio"):
@@ -350,14 +610,16 @@ class YoutubeDownload():
 
     def _download_video(self, ydl_opts: Dict[str, Any], video: Dict[str, Any], video_file_name: str):
         try:
-            self.__download_video(ydl_opts, video)
+            self._download_with_thumbnail_fallback(ydl_opts, video)
 
-        # don't write the thumbnail if not possible
-        except:
-            ydl_opts.pop('writethumbnail')
-            ydl_opts["postprocessors"].pop()
-
-            self.__download_video(ydl_opts, video)
+        # this runs on its own thread, and download_stream waits on Finished_Download.
+        #   Letting an exception escape would leave that stream running forever, so the
+        #   failure is recorded instead and reported to the frontend
+        except Exception as e:
+            Download_Error[self._id] = f"{type(e).__name__}: {e}"
+            File_Download_Type.pop(self._id, None)
+            Download_No.pop(self._id, None)
+            return
 
         File_Download_Type.pop(self._id, None)
         Download_No.pop(self._id, None)
@@ -367,8 +629,35 @@ class YoutubeDownload():
                 basefile = os.path.basename(filename)
                 break
 
-        Finished_Download[self._id] = os.path.join(self._folder, basefile)
+        downloaded_path = os.path.join(self._folder, basefile)
+
+        #apply the pitch/tempo edits before the file is offered for download
+        if (self._remix is not None):
+            Download_Progress[self._id] = "Remixing..."
+            downloaded_path = Remixer.apply(downloaded_path, self._remix)
+
+        Finished_Download[self._id] = downloaded_path
         Sending_Download.add(self._id)
+
+    # _download_with_thumbnail_fallback(ydl_opts, video): Downloads the video, retrying
+    #   once without the thumbnail since embedding fails for some videos
+    def _download_with_thumbnail_fallback(self, ydl_opts: Dict[str, Any], video: Dict[str, Any]):
+        try:
+            self.__download_video(ydl_opts, video)
+            return
+        except Exception:
+            #only worth retrying when a thumbnail was actually asked for. Otherwise the
+            #  retry would be identical, so re-raise and report the real error
+            if (not ydl_opts.pop("writethumbnail", False)):
+                raise
+
+        #drop the thumbnail postprocessor by key rather than by position -- it is not
+        #  always the last one in the list
+        ydl_opts["postprocessors"] = [pp for pp in ydl_opts.get("postprocessors", [])
+                                      if pp.get("key") != "EmbedThumbnail"]
+
+        self.__download_video(ydl_opts, video)
+
 
     # _download_video(ydl_opts, link): Downloads a video
     @classmethod
@@ -533,7 +822,23 @@ class YoutubeDownload():
             view_short = cls._format_short_views(view_count)
 
             video_id = entry.get("id", "")
-            thumbnail_url = entry.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hq720.jpg"
+
+            # prefer the thumbnails yt-dlp actually reported, and only construct a URL
+            #   as a last resort. hq720/maxresdefault do not exist for videos without a
+            #   720p rendition, and i.ytimg.com serves those 404s with a valid 120x90
+            #   grey placeholder JPEG, so a bad guess shows up as a blurred grey box
+            #   rather than as an error. hqdefault exists for every video
+            thumbnail_url = entry.get("thumbnail")
+
+            if (not thumbnail_url):
+                candidates = [t for t in (entry.get("thumbnails") or []) if t.get("url")]
+                candidates.sort(key = lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+
+                if (candidates):
+                    thumbnail_url = candidates[-1]["url"]
+
+            if (not thumbnail_url):
+                thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
 
             result = {
                 "type": "video",

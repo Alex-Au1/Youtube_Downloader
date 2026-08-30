@@ -1,4 +1,4 @@
-from .models import YoutubeDownload, Finished_Download
+from .models import YoutubeDownload, Finished_Download, Download_Error
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import never_cache
@@ -22,10 +22,13 @@ class DownloaderView():
         options = post_data["options"]
         folder = post_data["folder"]
 
+        #optional, so older clients that don't send it still work
+        remix = post_data.get("remix")
+
         download = YoutubeDownload()
         Downloads[download.id] = download
 
-        result = download.prepare_download(video, options, folder)
+        result = download.prepare_download(video, options, folder, remix)
         return JsonResponse(result)
     
     @classmethod
@@ -67,6 +70,14 @@ class DownloaderView():
             while True:
                 progress = download.get_progress()
                 yield f"data: {json.dumps({'type': 'progress', 'data': progress})}\n\n"
+
+                #a download whose worker thread died never sets Finished_Download, so
+                #  without this the stream would run forever and hang the client
+                error = Download_Error.get(download.id)
+
+                if error is not None:
+                    yield f"data: {json.dumps({'type': 'error', 'data': error})}\n\n"
+                    break
 
                 value = Finished_Download.get(download.id)
 

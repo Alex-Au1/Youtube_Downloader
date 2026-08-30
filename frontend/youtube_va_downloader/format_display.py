@@ -179,12 +179,42 @@ class FormatUtils():
         pyperclip.copy(text)
 
 
+    #matches a youtube thumbnail url, capturing everything up to the size variant
+    _YTIMG_THUMBNAIL = re.compile(r"^(https?://i\.ytimg\.com/vi/[^/]+/)[A-Za-z0-9_]+\.jpg")
+
+
+    #fetches 'link' as an image, or None if it is not a usable image
+    @classmethod
+    def _fetch_image(cls, link):
+        try:
+            response = requests.get(link, timeout = 15)
+
+            # i.ytimg.com answers a missing thumbnail size with a 404 whose body is a
+            #   valid 120x90 grey placeholder JPEG, so the status has to be checked
+            #   explicitly -- PIL decodes the placeholder without complaint
+            if (response.status_code != 200):
+                return None
+
+            return Image.open(BytesIO(response.content))
+        except Exception:
+            return None
+
+
     #makes an image from a link
     @classmethod
     def process_image(cls, link, img_w, img_h):
-        response = requests.get(link)
-        img_data = response.content
-        photo = Image.open(BytesIO(img_data))
+        photo = cls._fetch_image(link)
+
+        #retry at hqdefault, the one size that exists for every video
+        if (photo is None):
+            match = cls._YTIMG_THUMBNAIL.match(link)
+
+            if (match):
+                photo = cls._fetch_image(f"{match.group(1)}hqdefault.jpg")
+
+        #a single missing thumbnail should not take down the whole search
+        if (photo is None):
+            photo = Image.new("RGB", (img_w, img_h), (48, 48, 48))
 
         return photo.resize((img_w, img_h),Image.Resampling.LANCZOS)
 

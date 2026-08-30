@@ -42,13 +42,15 @@ class DownloadRequests():
         return result
     
     @classmethod
-    def prepare_download(cls, video, options, folder):
+    def prepare_download(cls, video, options, folder, remix = None):
         global Download_Id, Last_Progress, Last_Progress_Time, VideoMetadata, Fetch_Progress
 
         Last_Progress = "Sending Request to Server..."
         Download_Id = None
 
-        result = requests.post(f"{Host_Url}/prepare_download/", json = {"video": video, "options": options, "folder": folder})
+        #'remix' is sent as its own field on purpose. 'options' is a positional format
+        #  the backend indexes by hand, so appending to it would shift every index
+        result = requests.post(f"{Host_Url}/prepare_download/", json = {"video": video, "options": options, "folder": folder, "remix": remix})
         result = result.json()
 
         Fetch_Progress = True
@@ -65,6 +67,11 @@ class DownloadRequests():
                     Last_Progress = msg["data"]
                 elif msg["type"] == "done":
                     break
+
+                #the download died on the server. Raising here surfaces the reason in the
+                #  error dialog instead of failing further down on a missing file
+                elif msg["type"] == "error":
+                    raise RuntimeError(f"The server could not complete the download:\n\n{msg['data']}")
 
         fileRequest = requests.get(f"{Host_Url}/get_download/", params={"download_id": Download_Id})
 
